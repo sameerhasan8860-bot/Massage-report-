@@ -84,6 +84,7 @@ async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     help_text = (
         "🤖 *MASS REPORT BOT — COMMANDS*\n\n"
         "*/start* — Open main menu\n"
+        "*/host* — Add/host a Telegram account (OTP + optional 2FA)\n"
         "*/status* — Show account and bot status\n"
         "*/session* — List saved account phone numbers\n"
         "*/unhost +919876543210* — Remove a saved session by phone number\n"
@@ -101,6 +102,17 @@ async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text(
             help_text, parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_kb()
         )
+
+
+async def host_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Start the same account-hosting conversation used by the Add Account button."""
+    await update.effective_message.reply_text(
+        "📱 Enter phone number with country code:\\n\\nExample: `+919876543210`\\n\\n"
+        "Use /cancel to stop.",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=cancel_kb()
+    )
+    return ADD_PHONE
 
 
 async def session_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -353,7 +365,7 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(button_handler, pattern="^(add_account|start_report)$")],
+        entry_points=[\n            CommandHandler("host", host_cmd),\n            CallbackQueryHandler(button_handler, pattern="^(add_account|start_report)$")\n        ],
         states={
             ADD_PHONE:         [MessageHandler(filters.TEXT & ~filters.COMMAND, recv_phone)],
             ADD_CODE:          [MessageHandler(filters.TEXT & ~filters.COMMAND, recv_code)],
@@ -372,7 +384,7 @@ def main():
         per_message=False
     )
 
-    app.add_handler(CommandHandler("start",  start))
+    app.add_handler(CommandHandler("start",  start))\n    app.add_handler(CommandHandler("host", host_cmd))
     app.add_handler(CommandHandler("status", status_cmd))
     app.add_handler(CommandHandler("session", session_cmd))
     app.add_handler(CommandHandler("unhost", unhost_cmd))
@@ -386,7 +398,7 @@ def main():
         await fetch_proxies()
         asyncio.create_task(rotate_forever())
         await app.bot.set_my_commands([
-            BotCommand("start",  "Main menu"),
+            BotCommand("start",  "Main menu"),\n            BotCommand("host", "Add/host a Telegram account"),
             BotCommand("status", "Bot status"),
             BotCommand("session", "List saved sessions"),
             BotCommand("unhost", "Remove a saved session by phone"),
