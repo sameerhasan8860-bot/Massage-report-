@@ -25,6 +25,11 @@ async def get_all_sessions() -> list[dict]:
     db = get_db()
     return await db.sessions.find({"active": True}).to_list(length=None)
 
+async def delete_session(phone: str) -> bool:
+    db = get_db()
+    result = await db.sessions.delete_one({"phone": phone})
+    return result.deleted_count > 0
+
 async def mark_expired(phone: str):
     db = get_db()
     await db.sessions.update_one({"phone": phone}, {"$set": {"active": False}})
