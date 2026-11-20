@@ -116,7 +116,7 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if data == "sessions":
         sessions = await get_all_sessions()
-        lines = [f"`{s['phone']}`" for s in sessions] or ["No active sessions."]
+        lines = [f"`{i}. {s['phone']}`" for i, s in enumerate(sessions, start=1)] or ["No active sessions."]
         await q.edit_message_text(
             "📋 *Active Sessions:*\n\n" + "\n".join(lines),
             parse_mode=ParseMode.MARKDOWN,
