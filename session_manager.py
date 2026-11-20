@@ -2,7 +2,6 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from config import API_ID, API_HASH, MONGO_URI
-from proxy_manager import get_proxy
 import logging
 
 logger = logging.getLogger(__name__)
@@ -53,31 +52,12 @@ async def get_expired_count() -> int:
     db = get_db()
     return await db.sessions.count_documents({"active": False})
 
-async def build_client(session_str: str, index: int) -> TelegramClient:
-    proxy = get_proxy(index)
-    # Try with proxy first, fallback to no proxy
-    if proxy:
-        try:
-            client = TelegramClient(
-                StringSession(session_str),
-                API_ID, API_HASH,
-                proxy=proxy
-            )
-            await client.connect()
-            # Quick check: if connection worked, return it
-            if client.is_connected():
-                await client.disconnect()
-                # Return fresh instance (connect will be called by caller)
-                return TelegramClient(
-                    StringSession(session_str),
-                    API_ID, API_HASH,
-                    proxy=proxy
-                )
-        except Exception as e:
-            logger.warning(f"Proxy {proxy} failed: {e} — connecting without proxy")
-
-    # No proxy fallback
+async def build_client(session_str: str, index: int = 0) -> TelegramClient:
     return TelegramClient(
         StringSession(session_str),
-        API_ID, API_HASH,
+        API_ID,
+        API_HASH,
+        connection_retries=1,
+        retry_delay=1,
+        timeout=15,
     )
