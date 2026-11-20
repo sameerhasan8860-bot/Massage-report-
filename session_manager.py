@@ -2,7 +2,9 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from config import API_ID, API_HASH, MONGO_URI
-from proxy_manager import get_proxy
+import logging
+
+logger = logging.getLogger(__name__)
 
 _db = None
 
@@ -29,14 +31,14 @@ async def get_user_sessions(user_id: int) -> list[dict]:
     db = get_db()
     return await db.sessions.find({"owner": user_id, "active": True}).to_list(length=None)
 
+async def mark_expired(phone: str):
+    db = get_db()
+    await db.sessions.update_one({"phone": phone}, {"$set": {"active": False}})
+
 async def delete_session(phone: str, user_id: int) -> bool:
     db = get_db()
     result = await db.sessions.delete_one({"phone": phone, "owner": user_id})
     return result.deleted_count > 0
-
-async def mark_expired(phone: str):
-    db = get_db()
-    await db.sessions.update_one({"phone": phone}, {"$set": {"active": False}})
 
 async def get_total_count() -> int:
     db = get_db()
@@ -50,11 +52,12 @@ async def get_expired_count() -> int:
     db = get_db()
     return await db.sessions.count_documents({"active": False})
 
-async def build_client(session_str: str, index: int) -> TelegramClient:
-    proxy = get_proxy(index)
-    client = TelegramClient(
+async def build_client(session_str: str, index: int = 0) -> TelegramClient:
+    return TelegramClient(
         StringSession(session_str),
-        API_ID, API_HASH,
-        proxy=proxy
+        API_ID,
+        API_HASH,
+        connection_retries=1,
+        retry_delay=1,
+        timeout=15,
     )
-    return client

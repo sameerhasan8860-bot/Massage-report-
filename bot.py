@@ -1,4 +1,5 @@
 import asyncio
+import time
 import logging
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
@@ -7,7 +8,6 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, CallbackQueryHandler,
     MessageHandler, ConversationHandler, ContextTypes, filters
 )
-from telegram.request import HTTPXRequest
 from telegram.constants import ParseMode
 from config import BOT_TOKEN, API_ID, API_HASH
 from telethon import TelegramClient
@@ -16,17 +16,16 @@ from session_manager import (
     save_session, get_all_sessions, delete_session,
     get_total_count, get_active_count, get_expired_count
 )
-from reporter import mass_report
+from reporter import mass_report, mass_join
 from proxy_manager import fetch_proxies, rotate_forever
 
 logging.basicConfig(level=logging.INFO)
 
-# States
 (
     ADD_PHONE, ADD_CODE, ADD_2FA,
     REPORT_TARGET, REPORT_REASON_CAT, REPORT_REASON_SUB,
-    REPORT_COUNT, CONFIRM_REPORT
-) = range(8)
+    REPORT_MESSAGE, REPORT_COUNT, CONFIRM_REPORT
+) = range(9)
 
 REASONS = {
     "1":  ("😤 I don't like it",         []),
@@ -41,27 +40,12 @@ REASONS = {
     "10": ("⚠️ Not illegal but remove",  []),
 }
 
-tmp = {}  # user state temp storage
+tmp = {}
+
 
 def cancel_kb():
     return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel / Stop", callback_data="cancel_flow")]])
 
-async def cancel_flow(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    data = tmp.pop(uid, None)
-    if data and data.get("client"):
-        try:
-            await data["client"].disconnect()
-        except Exception:
-            pass
-
-    if update.callback_query:
-        q = update.callback_query
-        await q.answer("Process cancelled.")
-        await q.edit_message_text("❌ *Host process cancelled.*\n\nNo new session was saved.", parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_kb())
-    elif update.effective_message:
-        await update.effective_message.reply_text("❌ Host process cancelled. No new session was saved.", reply_markup=main_menu_kb())
-    return ConversationHandler.END
 
 def main_menu_kb():
     return InlineKeyboardMarkup([
@@ -72,9 +56,32 @@ def main_menu_kb():
         [InlineKeyboardButton("❔ Help", callback_data="help")],
     ])
 
+
+async def cancel_flow(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    data = tmp.pop(uid, None)
+    if data and data.get("client"):
+        try:
+            await data["client"].disconnect()
+        except Exception:
+            pass
+    if update.callback_query:
+        await update.callback_query.answer("Cancelled.")
+        await update.callback_query.edit_message_text(
+            "❌ *Cancelled.*\n\nNo session was saved.",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=main_menu_kb()
+        )
+    elif update.effective_message:
+        await update.effective_message.reply_text(
+            "❌ Cancelled.", reply_markup=main_menu_kb()
+        )
+    return ConversationHandler.END
+
+
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🤖 *Mass Report Bot*\n\n_Multi-account • Proxy Rotation • MongoDB Sessions_",
+        "🤖 *Mass Report Bot*\n\n_Multi-account • Fast Parallel Reports • MongoDB Sessions_",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=main_menu_kb()
     )
@@ -87,11 +94,16 @@ async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "*/host* — Add/host a Telegram account (OTP + optional 2FA)\n"
         "*/status* — Show account and bot status\n"
         "*/session* — List saved account phone numbers\n"
-        "*/unhost +919876543210* — Remove a saved session by phone number\n"
-        "*/join <link or @username>* — Join a chat with configured accounts\n"
+        "*/unhost +919876543210* — Remove a saved session by phone\n"
+        "*/join <link or @username>* — Join a chat with all accounts\n"
         "*/cancel* — Cancel an active setup flow\n"
         "*/help* — Show this command list\n\n"
-        "Use the menu buttons for the guided account and reporting workflows."
+        "*Target formats for reporting:*\n"
+        "• `@username` — user, bot, channel\n"
+        "• `https://t.me/username` — peer link\n"
+        "• `https://t.me/username/123` — specific message\n"
+        "• `https://t.me/c/CHANNELID/123` — private channel msg\n"
+        "• Numeric Telegram user ID"
     )
     if update.callback_query:
         await update.callback_query.edit_message_text(
@@ -105,10 +117,8 @@ async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def host_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Start the same account-hosting conversation used by the Add Account button."""
     await update.effective_message.reply_text(
-        "📱 Enter phone number with country code:\\n\\nExample: `+919876543210`\\n\\n"
-        "Use /cancel to stop.",
+        "📱 Enter phone number with country code:\n\nExample: `+919876543210`\n\nUse /cancel to stop.",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=cancel_kb()
     )
@@ -141,12 +151,12 @@ async def unhost_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     removed = await delete_session(phone, update.effective_user.id)
     if removed:
         await update.effective_message.reply_text(
-            f"✅ Session `{phone}` has been removed from MongoDB.",
+            f"✅ Session `{phone}` removed.",
             parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_kb()
         )
     else:
         await update.effective_message.reply_text(
-            f"ℹ️ No saved session found for `{phone}`.",
+            f"ℹ️ No session found for `{phone}`.",
             parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_kb()
         )
 
@@ -155,11 +165,10 @@ async def status_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     total   = await get_total_count()
     active  = await get_active_count()
     expired = await get_expired_count()
-
     text = (
-        f"╔══════════════════╗\n"
-        f"║   📊 BOT STATUS   ║\n"
-        f"╚══════════════════╝\n\n"
+        "╔══════════════════╗\n"
+        "║   📊 BOT STATUS   ║\n"
+        "╚══════════════════╝\n\n"
         f"🟢 Active IDs   : `{active}`\n"
         f"🔴 Expired IDs  : `{expired}`\n"
         f"📦 Total IDs    : `{total}`\n"
@@ -167,7 +176,11 @@ async def status_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if update.message:
         await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
     else:
-        await update.callback_query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back")]]))
+        await update.callback_query.edit_message_text(
+            text, parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back")]])
+        )
+
 
 async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -202,111 +215,198 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "add_account":
-        await q.edit_message_text("📱 Enter phone number with country code:\n\nExample: `+919876543210`\n\nUse /cancel or the button below to stop.", parse_mode=ParseMode.MARKDOWN, reply_markup=cancel_kb())
+        await q.edit_message_text(
+            "📱 Enter phone number with country code:\n\nExample: `+919876543210`\n\nUse /cancel to stop.",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=cancel_kb()
+        )
         return ADD_PHONE
 
     if data == "start_report":
-        await q.edit_message_text("🎯 Send target:\n\n• `@username`\n• Channel/Group link\n• Bot username", parse_mode=ParseMode.MARKDOWN)
+        await q.edit_message_text(
+            "🎯 *Send target:*\n\n"
+            "• `@username` — user, bot, channel\n"
+            "• `https://t.me/username` — peer link\n"
+            "• `https://t.me/username/123` — specific message\n"
+            "• `https://t.me/c/CHANNELID/123` — private channel msg\n"
+            "• Numeric Telegram user ID",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=cancel_kb()
+        )
         return REPORT_TARGET
 
     if data.startswith("cat_"):
         cat = data[4:]
+        if uid not in tmp:
+            tmp[uid] = {}
         tmp[uid]["cat"] = cat
         subs = REASONS[cat][1]
         if not subs:
             tmp[uid]["reason"] = cat
-            await q.edit_message_text("🔢 How many reports per ID? (e.g. 20)", parse_mode=ParseMode.MARKDOWN)
-            return REPORT_COUNT
+            await q.edit_message_text(
+                "✍️ *Report message:*\n\nType what you want written in the report:",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=cancel_kb()
+            )
+            return REPORT_MESSAGE
         kb = [[InlineKeyboardButton(label, callback_data=f"sub_{key}")] for key, label in subs]
         kb.append([InlineKeyboardButton("🔙 Back", callback_data="start_report")])
-        await q.edit_message_text(f"📂 *{REASONS[cat][0]}*\n\nSelect sub-reason:", parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(kb))
+        await q.edit_message_text(
+            f"📂 *{REASONS[cat][0]}*\n\nSelect sub-reason:",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
         return REPORT_REASON_SUB
 
     if data.startswith("sub_"):
+        if uid not in tmp:
+            tmp[uid] = {}
         tmp[uid]["reason"] = data[4:]
-        await q.edit_message_text("🔢 How many reports per ID? (e.g. 20)", parse_mode=ParseMode.MARKDOWN)
-        return REPORT_COUNT
+        await q.edit_message_text(
+            "✍️ *Report message:*\n\nType what you want written in the report:",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=cancel_kb()
+        )
+        return REPORT_MESSAGE
 
     if data == "confirm_report":
-        await q.edit_message_text("⏳ *Mass reporting started...*\n\nThis may take a while.", parse_mode=ParseMode.MARKDOWN)
         sessions = await get_all_sessions()
-        target   = tmp[uid]["target"]
-        reason   = tmp[uid]["reason"]
-        count    = tmp[uid]["count"]
+        if not sessions:
+            await q.edit_message_text(
+                "❌ *No active sessions.*\n\nAdd accounts first via ➕ Add Account.",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=main_menu_kb()
+            )
+            return ConversationHandler.END
 
-        sent_msg = await q.message.reply_text("📡 Reporting in progress...")
+        target         = tmp[uid]["target"]
+        reason         = tmp[uid]["reason"]
+        count          = tmp[uid]["count"]
+        report_message = tmp[uid]["report_message"]
+        total_ids      = len(sessions)
+        total_expected = total_ids * count
 
-        progress = {"last": 0}
+        await q.edit_message_text("⏳ *Mass reporting started...*", parse_mode=ParseMode.MARKDOWN)
+
+        sent_msg = await q.message.reply_text(
+            f"📡 *Reporting in progress...*\n\n"
+            f"✅ Success  : `0`\n"
+            f"❌ Failed   : `0`\n"
+            f"🔴 Expired  : `0`\n"
+            f"📊 Done     : `0 / {total_expected}`",
+            parse_mode=ParseMode.MARKDOWN
+        )
+
+        last_edit = {"t": 0}
+
         async def cb(r):
-            total_done = r["success"] + r["failed"] + r["expired"]
-            if total_done - progress["last"] >= 5:
-                progress["last"] = total_done
-                await sent_msg.edit_text(
-                    f"📡 *Reporting...*\n\n"
-                    f"✅ Success : `{r['success']}`\n"
-                    f"❌ Failed  : `{r['failed']}`\n"
-                    f"🔴 Expired : `{r['expired']}`",
-                    parse_mode=ParseMode.MARKDOWN
-                )
+            now = time.time()
+            done = r["success"] + r["failed"] + r["expired"]
+            if now - last_edit["t"] >= 1 or done >= total_expected:
+                last_edit["t"] = now
+                try:
+                    await sent_msg.edit_text(
+                        f"📡 *Reporting in progress...*\n\n"
+                        f"✅ Success  : `{r['success']}`\n"
+                        f"❌ Failed   : `{r['failed']}`\n"
+                        f"🔴 Expired  : `{r['expired']}`\n"
+                        f"📊 Done     : `{done} / {total_expected}`",
+                        parse_mode=ParseMode.MARKDOWN
+                    )
+                except Exception:
+                    pass
 
-        result = await mass_report(sessions, target, reason, count, progress_cb=cb)
+        result = await mass_report(
+            sessions, target, reason, count, report_message, progress_cb=cb
+        )
+
+        err_summary = ""
+        if result.get("errors"):
+            unique_errors = list(set(result["errors"]))[:2]
+            err_summary = "\n⚠️ `" + "` | `".join(unique_errors) + "`"
+
         await sent_msg.edit_text(
-            f"╔══════════════════╗\n"
-            f"║   ✅ REPORT DONE  ║\n"
-            f"╚══════════════════╝\n\n"
+            "╔══════════════════╗\n"
+            "║   📊 REPORT DONE  ║\n"
+            "╚══════════════════╝\n\n"
             f"🎯 Target   : `{target}`\n"
             f"✅ Success  : `{result['success']}`\n"
             f"❌ Failed   : `{result['failed']}`\n"
             f"🔴 Expired  : `{result['expired']}`\n"
-            f"📦 Total IDs: `{len(sessions)}`",
+            f"👥 Total IDs: `{total_ids}`\n"
+            f"📊 Total    : `{total_ids * count}`"
+            f"{err_summary}",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=main_menu_kb()
         )
+        tmp.pop(uid, None)
         return ConversationHandler.END
+
+    return None
+
 
 # --- Add Account Flow ---
 async def recv_phone(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid   = update.effective_user.id
     phone = update.message.text.strip()
-    client = TelegramClient(StringSession(), API_ID, API_HASH)
-    await client.connect()
-    tmp[uid] = {"client": client, "phone": phone}
-    await client.send_code_request(phone)
-    await update.message.reply_text("🔑 Enter OTP code:", reply_markup=cancel_kb())
-    return ADD_CODE
+    try:
+        client = TelegramClient(StringSession(), API_ID, API_HASH)
+        await client.connect()
+        await client.send_code_request(phone)
+        tmp[uid] = {"client": client, "phone": phone}
+        await update.message.reply_text("🔑 Enter the OTP you received:", reply_markup=cancel_kb())
+        return ADD_CODE
+    except Exception as e:
+        await update.message.reply_text(
+            f"❌ Error: `{e}`\n\nTry again or /cancel",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return ADD_PHONE
+
 
 async def recv_code(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid  = update.effective_user.id
     code = update.message.text.strip()
-    data = tmp[uid]
+    data = tmp.get(uid, {})
     try:
         await data["client"].sign_in(data["phone"], code)
-    except Exception as e:
-        if "2FA" in str(e) or "password" in str(e).lower():
-            await update.message.reply_text("🔐 Enter your 2FA password:", reply_markup=cancel_kb())
-            tmp[uid]["code"] = code
-            return ADD_2FA
-        await update.message.reply_text(f"❌ Error: {e}")
+        session_str = data["client"].session.save()
+        await save_session(uid, data["phone"], session_str)
+        await data["client"].disconnect()
+        await update.message.reply_text(
+            f"✅ Account `{data['phone']}` added!",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=main_menu_kb()
+        )
+        tmp.pop(uid, None)
         return ConversationHandler.END
-    session_str = data["client"].session.save()
-    await save_session(uid, data["phone"], session_str)
-    await data["client"].disconnect()
-    await update.message.reply_text(f"✅ Account `{data['phone']}` added!", parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_kb())
-    return ConversationHandler.END
+    except Exception as e:
+        if "SessionPasswordNeeded" in str(e) or "2FA" in str(e) or "password" in str(e).lower():
+            await update.message.reply_text("🔐 Enter your 2FA password:", reply_markup=cancel_kb())
+            return ADD_2FA
+        await update.message.reply_text(f"❌ OTP error: `{e}`", parse_mode=ParseMode.MARKDOWN)
+        return ConversationHandler.END
+
 
 async def recv_2fa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid      = update.effective_user.id
     password = update.message.text.strip()
-    data     = tmp[uid]
+    data     = tmp.get(uid, {})
     try:
         await data["client"].sign_in(password=password)
         session_str = data["client"].session.save()
         await save_session(uid, data["phone"], session_str)
         await data["client"].disconnect()
-        await update.message.reply_text(f"✅ Account `{data['phone']}` added!", parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_kb())
+        await update.message.reply_text(
+            f"✅ Account `{data['phone']}` added!",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=main_menu_kb()
+        )
+        tmp.pop(uid, None)
     except Exception as e:
-        await update.message.reply_text(f"❌ 2FA failed: {e}")
+        await update.message.reply_text(f"❌ 2FA failed: `{e}`", parse_mode=ParseMode.MARKDOWN)
     return ConversationHandler.END
+
 
 # --- Report Flow ---
 async def recv_target(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -314,25 +414,54 @@ async def recv_target(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     target = update.message.text.strip()
     tmp[uid] = {"target": target}
     kb = [[InlineKeyboardButton(v[0], callback_data=f"cat_{k}")] for k, v in REASONS.items()]
-    await update.message.reply_text("📂 Select report category:", reply_markup=InlineKeyboardMarkup(kb))
+    await update.message.reply_text(
+        f"📂 *Select report category:*\n\n🎯 Target: `{target}`",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
     return REPORT_REASON_CAT
+
+
+async def recv_report_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid  = update.effective_user.id
+    text = update.message.text.strip()
+    if not text:
+        await update.message.reply_text("❌ Report message cannot be empty. Type a message:")
+        return REPORT_MESSAGE
+    if len(text) > 512:
+        await update.message.reply_text("❌ Too long (max 512 chars). Try again:")
+        return REPORT_MESSAGE
+    tmp[uid]["report_message"] = text
+    await update.message.reply_text(
+        "🔢 *How many reports per ID?*\n\nEnter a number (e.g. 20):",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=cancel_kb()
+    )
+    return REPORT_COUNT
+
 
 async def recv_count(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     try:
         count = int(update.message.text.strip())
-    except:
-        await update.message.reply_text("❌ Enter a valid number.")
+        if count < 1:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text("❌ Enter a valid positive number:")
         return REPORT_COUNT
+
     tmp[uid]["count"] = count
     sessions = await get_all_sessions()
+    t = tmp[uid]
+
     await update.message.reply_text(
-        f"⚠️ *Confirm Report*\n\n"
-        f"🎯 Target : `{tmp[uid]['target']}`\n"
-        f"📋 Reason : `{tmp[uid]['reason']}`\n"
-        f"🔢 Per ID : `{count}`\n"
-        f"👥 IDs    : `{len(sessions)}`\n"
-        f"📊 Total  : `{len(sessions) * count}`",
+        "⚠️ *Confirm Report*\n\n"
+        f"🎯 Target         : `{t['target']}`\n"
+        f"📋 Reason         : `{t['reason']}`\n"
+        f"✍️ Message        : `{t['report_message'][:60]}{'...' if len(t['report_message']) > 60 else ''}`\n"
+        f"🔢 Per ID         : `{count}`\n"
+        f"👥 Active IDs     : `{len(sessions)}`\n"
+        f"📊 Total reports  : `{len(sessions) * count}`",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("✅ Start Reporting", callback_data="confirm_report"),
@@ -341,25 +470,126 @@ async def recv_count(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
     return CONFIRM_REPORT
 
+
 async def join_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not ctx.args:
-        await update.message.reply_text("Usage: /join <link or @username>")
+        await update.message.reply_text(
+            "Usage: `/join @username` or `/join https://t.me/+invitehash`",
+            parse_mode=ParseMode.MARKDOWN
+        )
         return
+
     target   = ctx.args[0]
     sessions = await get_all_sessions()
-    joined, failed = 0, 0
-    for i, s in enumerate(sessions):
-        try:
-            from session_manager import build_client
-            from telethon.tl.functions.channels import JoinChannelRequest
-            client = await build_client(s["session"], i)
-            await client.connect()
-            await client(JoinChannelRequest(target))
+    if not sessions:
+        await update.message.reply_text("❌ No active sessions found.")
+        return
+
+    total = len(sessions)
+    msg = await update.message.reply_text(
+        f"⏳ *Joining* `{target}`\n\n"
+        f"✅ Joined  : `0`\n"
+        f"🔄 Already : `0`\n"
+        f"❌ Failed  : `0`\n"
+        f"📊 Done    : `0 / {total}`",
+        parse_mode=ParseMode.MARKDOWN
+    )
+
+    last_edit = {"t": 0}
+
+    async def progress_cb(r):
+        now  = time.time()
+        done = r["joined"] + r["already"] + r["failed"]
+        if now - last_edit["t"] >= 1 or done >= total:
+            last_edit["t"] = now
+            try:
+                await msg.edit_text(
+                    f"⏳ *Joining* `{target}`\n\n"
+                    f"✅ Joined  : `{r['joined']}`\n"
+                    f"🔄 Already : `{r['already']}`\n"
+                    f"❌ Failed  : `{r['failed']}`\n"
+                    f"📊 Done    : `{done} / {total}`",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            except Exception:
+                pass
+
+    result = await mass_join(sessions, target, progress_cb=progress_cb)
+
+    await msg.edit_text(
+        "╔══════════════════╗\n"
+        "║    ✅ JOIN DONE   ║\n"
+        "╚══════════════════╝\n\n"
+        f"🎯 Target  : `{target}`\n"
+        f"✅ Joined  : `{result['joined']}`\n"
+        f"🔄 Already : `{result['already']}`\n"
+        f"❌ Failed  : `{result['failed']}`\n"
+        f"👥 Total   : `{total}`",
+        parse_mode=ParseMode.MARKDOWN
+    )
+
+
+async def otp_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not ctx.args:
+        await update.message.reply_text("Usage: /otp +919876543210")
+        return
+
+    phone = ctx.args[0].strip()
+
+    db_sessions = await get_all_sessions()
+    matched = next((s for s in db_sessions if s.get("phone") == phone), None)
+
+    if not matched:
+        await update.message.reply_text(
+            f"❌ `{phone}` bot mein hosted nahi hai.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+
+    msg = await update.message.reply_text(
+        f"⏳ `{phone}` ka latest OTP fetch kar raha hoon...",
+        parse_mode=ParseMode.MARKDOWN
+    )
+
+    try:
+        from session_manager import build_client
+        client = await build_client(matched["session"])
+        await client.connect()
+
+        if not await client.is_user_authorized():
+            await msg.edit_text(
+                f"❌ `{phone}` ka session expire ho gaya hai.",
+                parse_mode=ParseMode.MARKDOWN
+            )
             await client.disconnect()
-            joined += 1
-        except:
-            failed += 1
-    await update.message.reply_text(f"✅ Joined: `{joined}` | ❌ Failed: `{failed}`", parse_mode=ParseMode.MARKDOWN)
+            return
+
+        # 777000 = Telegram ka official OTP sender
+        messages = await client.get_messages(777000, limit=5)
+
+        if not messages:
+            await msg.edit_text(
+                "❌ Koi OTP message nahi mila.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            await client.disconnect()
+            return
+
+        latest   = messages[0]
+        text     = latest.message or "(empty)"
+        date_str = latest.date.strftime("%Y-%m-%d %H:%M:%S UTC") if latest.date else "unknown"
+
+        await msg.edit_text(
+            f"📱 *{phone}* ka latest OTP message:\n\n"
+            f"`{text}`\n\n"
+            f"🕐 `{date_str}`",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        await client.disconnect()
+
+    except Exception as e:
+        await msg.edit_text(f"❌ Error: `{e}`", parse_mode=ParseMode.MARKDOWN)
+
 
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -367,7 +597,7 @@ def main():
     conv = ConversationHandler(
         entry_points=[
             CommandHandler("host", host_cmd),
-            CallbackQueryHandler(button_handler, pattern="^(add_account|start_report)$")
+            CallbackQueryHandler(button_handler, pattern="^(add_account|start_report)$"),
         ],
         states={
             ADD_PHONE:         [MessageHandler(filters.TEXT & ~filters.COMMAND, recv_phone)],
@@ -376,43 +606,47 @@ def main():
             REPORT_TARGET:     [MessageHandler(filters.TEXT & ~filters.COMMAND, recv_target)],
             REPORT_REASON_CAT: [CallbackQueryHandler(button_handler, pattern="^cat_")],
             REPORT_REASON_SUB: [CallbackQueryHandler(button_handler, pattern="^sub_")],
+            REPORT_MESSAGE:    [MessageHandler(filters.TEXT & ~filters.COMMAND, recv_report_message)],
             REPORT_COUNT:      [MessageHandler(filters.TEXT & ~filters.COMMAND, recv_count)],
             CONFIRM_REPORT:    [CallbackQueryHandler(button_handler, pattern="^confirm_report$")],
         },
         fallbacks=[
             CommandHandler("cancel", cancel_flow),
             CallbackQueryHandler(cancel_flow, pattern="^cancel_flow$"),
-            CallbackQueryHandler(button_handler, pattern="^back$")
+            CallbackQueryHandler(button_handler, pattern="^back$"),
         ],
-        per_message=False
+        per_message=False,
+        allow_reentry=True,
     )
 
-    app.add_handler(CommandHandler("start",  start))
-    app.add_handler(CommandHandler("status", status_cmd))
+    app.add_handler(CommandHandler("start",   start))
+    app.add_handler(CommandHandler("status",  status_cmd))
     app.add_handler(CommandHandler("session", session_cmd))
-    app.add_handler(CommandHandler("unhost", unhost_cmd))
-    app.add_handler(CommandHandler("help", help_cmd))
-    app.add_handler(CommandHandler("join",   join_cmd))
+    app.add_handler(CommandHandler("unhost",  unhost_cmd))
+    app.add_handler(CommandHandler("help",    help_cmd))
+    app.add_handler(CommandHandler("join",    join_cmd))
+    app.add_handler(CommandHandler("otp",     otp_cmd))
     app.add_handler(conv)
-    app.add_handler(CommandHandler("cancel", cancel_flow))
+    app.add_handler(CommandHandler("cancel",  cancel_flow))
     app.add_handler(CallbackQueryHandler(button_handler))
 
     async def on_startup(app):
         await fetch_proxies()
         asyncio.create_task(rotate_forever())
         await app.bot.set_my_commands([
-            BotCommand("start",  "Main menu"),
-            BotCommand("host", "Add/host a Telegram account"),
-            BotCommand("status", "Bot status"),
+            BotCommand("start",   "Main menu"),
+            BotCommand("host",    "Add/host a Telegram account"),
+            BotCommand("status",  "Bot status"),
             BotCommand("session", "List saved sessions"),
-            BotCommand("unhost", "Remove a saved session by phone"),
-            BotCommand("help", "Show all commands"),
-            BotCommand("join",   "Join with all IDs"),
-            BotCommand("cancel", "Cancel the current host process"),
+            BotCommand("unhost",  "Remove a saved session by phone"),
+            BotCommand("join",    "Join with all accounts"),
+            BotCommand("cancel",  "Cancel current flow"),
+            BotCommand("help",    "Show all commands"),
         ])
 
     app.post_init = on_startup
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
