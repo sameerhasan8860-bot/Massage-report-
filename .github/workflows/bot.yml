@@ -4,13 +4,21 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-  schedule:
-    - cron: '*/30 * * * *'
+
+# Only one run may execute at a time. A newer manual/automatic run
+# cancels the older run and waits for GitHub to release the runner.
+concurrency:
+  group: mass-report-bot-single-run
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: write
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    timeout-minutes: 360
 
     steps:
       - name: Checkout
@@ -24,10 +32,34 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run bot
+      - name: Run bot and rotate after 5h 50m
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          API_ID:    ${{ secrets.API_ID }}
-          API_HASH:  ${{ secrets.API_HASH }}
+          API_ID: ${{ secrets.API_ID }}
+          API_HASH: ${{ secrets.API_HASH }}
           MONGO_URI: ${{ secrets.MONGO_URI }}
-        run: python bot.py
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python bot.py &
+          BOT_PID=$!
+
+          stop_bot() {
+            if kill -0 "$BOT_PID" 2>/dev/null; then
+              kill "$BOT_PID" 2>/dev/null || true
+              wait "$BOT_PID" 2>/dev/null || true
+            fi
+          }
+          trap stop_bot EXIT INT TERM
+
+          echo "Bot started. Next run will be dispatched after 5h 50m."
+          sleep 350m
+
+          echo "Dispatching replacement workflow. Concurrency will cancel this older run before the replacement proceeds."
+          gh workflow run bot.yml --ref "$GITHUB_REF_NAME"
+
+          # Keep this run alive until GitHub cancels it after the new run
+          # enters the same concurrency group.
+          wait "$BOT_PID"
