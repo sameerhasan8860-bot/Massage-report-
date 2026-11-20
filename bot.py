@@ -384,8 +384,7 @@ def main():
         per_message=False
     )
 
-    app.add_handler(CommandHandler("start",  start))\n    app.add_handler(CommandHandler("host", host_cmd))
-    app.add_handler(CommandHandler("status", status_cmd))
+    app.add_handler(CommandHandler("start",  start))\n    app.add_handler(CommandHandler("status", status_cmd))
     app.add_handler(CommandHandler("session", session_cmd))
     app.add_handler(CommandHandler("unhost", unhost_cmd))
     app.add_handler(CommandHandler("help", help_cmd))
