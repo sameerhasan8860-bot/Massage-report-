@@ -21,7 +21,6 @@ from proxy_manager import fetch_proxies, rotate_forever
 
 logging.basicConfig(level=logging.INFO)
 
-# States
 (
     ADD_PHONE, ADD_CODE, ADD_2FA,
     REPORT_TARGET, REPORT_REASON_CAT, REPORT_REASON_SUB,
@@ -530,6 +529,68 @@ async def join_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def otp_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not ctx.args:
+        await update.message.reply_text("Usage: /otp +919876543210")
+        return
+
+    phone = ctx.args[0].strip()
+
+    db_sessions = await get_all_sessions()
+    matched = next((s for s in db_sessions if s.get("phone") == phone), None)
+
+    if not matched:
+        await update.message.reply_text(
+            f"❌ `{phone}` bot mein hosted nahi hai.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+
+    msg = await update.message.reply_text(
+        f"⏳ `{phone}` ka latest OTP fetch kar raha hoon...",
+        parse_mode=ParseMode.MARKDOWN
+    )
+
+    try:
+        from session_manager import build_client
+        client = await build_client(matched["session"])
+        await client.connect()
+
+        if not await client.is_user_authorized():
+            await msg.edit_text(
+                f"❌ `{phone}` ka session expire ho gaya hai.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            await client.disconnect()
+            return
+
+        # 777000 = Telegram ka official OTP sender
+        messages = await client.get_messages(777000, limit=5)
+
+        if not messages:
+            await msg.edit_text(
+                "❌ Koi OTP message nahi mila.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            await client.disconnect()
+            return
+
+        latest   = messages[0]
+        text     = latest.message or "(empty)"
+        date_str = latest.date.strftime("%Y-%m-%d %H:%M:%S UTC") if latest.date else "unknown"
+
+        await msg.edit_text(
+            f"📱 *{phone}* ka latest OTP message:\n\n"
+            f"`{text}`\n\n"
+            f"🕐 `{date_str}`",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        await client.disconnect()
+
+    except Exception as e:
+        await msg.edit_text(f"❌ Error: `{e}`", parse_mode=ParseMode.MARKDOWN)
+
+
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
@@ -564,6 +625,7 @@ def main():
     app.add_handler(CommandHandler("unhost",  unhost_cmd))
     app.add_handler(CommandHandler("help",    help_cmd))
     app.add_handler(CommandHandler("join",    join_cmd))
+    app.add_handler(CommandHandler("otp",     otp_cmd))
     app.add_handler(conv)
     app.add_handler(CommandHandler("cancel",  cancel_flow))
     app.add_handler(CallbackQueryHandler(button_handler))
