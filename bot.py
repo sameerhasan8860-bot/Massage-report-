@@ -13,7 +13,7 @@ from config import BOT_TOKEN, API_ID, API_HASH
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from session_manager import (
-    save_session, get_all_sessions,
+    save_session, get_all_sessions, delete_session,
     get_total_count, get_active_count, get_expired_count
 )
 from reporter import mass_report
@@ -69,6 +69,7 @@ def main_menu_kb():
          InlineKeyboardButton("📊 Status",      callback_data="status")],
         [InlineKeyboardButton("🚨 Mass Report", callback_data="start_report"),
          InlineKeyboardButton("📋 Sessions",    callback_data="sessions")],
+        [InlineKeyboardButton("❔ Help", callback_data="help")],
     ])
 
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -77,6 +78,65 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=main_menu_kb()
     )
+
+
+async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    help_text = (
+        "🤖 *MASS REPORT BOT — COMMANDS*\n\n"
+        "*/start* — Open main menu\n"
+        "*/status* — Show account and bot status\n"
+        "*/session* — List saved account phone numbers\n"
+        "*/unhost +919876543210* — Remove a saved session by phone number\n"
+        "*/join <link or @username>* — Join a chat with configured accounts\n"
+        "*/cancel* — Cancel an active setup flow\n"
+        "*/help* — Show this command list\n\n"
+        "Use the menu buttons for the guided account and reporting workflows."
+    )
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            help_text, parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back")]])
+        )
+    else:
+        await update.effective_message.reply_text(
+            help_text, parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_kb()
+        )
+
+
+async def session_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    sessions = await get_all_sessions()
+    lines = [f"`{i}. {item.get('phone', 'Unknown')}`" for i, item in enumerate(sessions, start=1)]
+    message = "📋 *Saved Sessions*\n\n" + ("\n".join(lines) if lines else "No active sessions found.")
+    await update.effective_message.reply_text(
+        message, parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_kb()
+    )
+
+
+async def unhost_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not ctx.args:
+        await update.effective_message.reply_text(
+            "Usage: `/unhost +919876543210`", parse_mode=ParseMode.MARKDOWN
+        )
+        return
+    phone = ctx.args[0].strip()
+    if not phone.startswith("+") or not phone[1:].isdigit():
+        await update.effective_message.reply_text(
+            "❌ Invalid phone number. Include country code, e.g. `+919876543210`.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+    removed = await delete_session(phone)
+    if removed:
+        await update.effective_message.reply_text(
+            f"✅ Session `{phone}` has been removed from MongoDB.",
+            parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_kb()
+        )
+    else:
+        await update.effective_message.reply_text(
+            f"ℹ️ No saved session found for `{phone}`.",
+            parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_kb()
+        )
+
 
 async def status_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     total   = await get_total_count()
@@ -112,6 +172,10 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if data == "status":
         await status_cmd(update, ctx)
+        return
+
+    if data == "help":
+        await help_cmd(update, ctx)
         return
 
     if data == "sessions":
@@ -309,6 +373,9 @@ def main():
 
     app.add_handler(CommandHandler("start",  start))
     app.add_handler(CommandHandler("status", status_cmd))
+    app.add_handler(CommandHandler("session", session_cmd))
+    app.add_handler(CommandHandler("unhost", unhost_cmd))
+    app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("join",   join_cmd))
     app.add_handler(conv)
     app.add_handler(CommandHandler("cancel", cancel_flow))
@@ -320,6 +387,9 @@ def main():
         await app.bot.set_my_commands([
             BotCommand("start",  "Main menu"),
             BotCommand("status", "Bot status"),
+            BotCommand("session", "List saved sessions"),
+            BotCommand("unhost", "Remove a saved session by phone"),
+            BotCommand("help", "Show all commands"),
             BotCommand("join",   "Join with all IDs"),
             BotCommand("cancel", "Cancel the current host process"),
         ])
