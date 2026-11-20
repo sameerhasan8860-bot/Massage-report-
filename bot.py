@@ -1,4 +1,5 @@
 import asyncio
+import time
 import logging
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
@@ -28,23 +29,23 @@ logging.basicConfig(level=logging.INFO)
 ) = range(9)
 
 REASONS = {
-    "1":  ("😤 I don't like it",        []),
-    "2":  ("👶 Child Abuse",            [("2a","Child illegal abuse"),("2b","Child sexual abuse")]),
-    "3":  ("🔪 Violence",               [("3a","Insult / false info"),("3b","Graphic content"),("3c","Extreme violence"),("3d","Hate speech"),("3e","Calling for violence"),("3f","Terrorism")]),
-    "4":  ("🚫 Illegal Goods/Services", [("4a","Weapons"),("4b","Drugs"),("4c","Fake documents"),("4d","Counterfeit money"),("4e","Hacking tools"),("4f","Counterfeit merch"),("4g","Other")]),
-    "5":  ("🔞 Illegal Adult Content",  [("5a","Child abuse"),("5b","Illegal sexual service"),("5c","Animal abuse"),("5d","Non-consensual imagery"),("5e","Pornography"),("5f","Other")]),
-    "6":  ("🧾 Personal Data",          [("6a","Private images"),("6b","Private number"),("6c","Address"),("6d","Credentials"),("6e","Other")]),
-    "7":  ("💸 Scam or Fraud",          [("7a","Impersonation"),("7b","Financial scams"),("7c","Malware/phishing"),("7d","Fraudulent seller")]),
-    "8":  ("©️ Copyright",              []),
-    "9":  ("🔎 Other",                  []),
-    "10": ("⚠️ Not illegal but remove", []),
+    "1":  ("😤 I don't like it",         []),
+    "2":  ("👶 Child Abuse",             [("2a","Child illegal abuse"),("2b","Child sexual abuse")]),
+    "3":  ("🔪 Violence",                [("3a","Insult / false info"),("3b","Graphic content"),("3c","Extreme violence"),("3d","Hate speech"),("3e","Calling for violence"),("3f","Terrorism")]),
+    "4":  ("🚫 Illegal Goods/Services",  [("4a","Weapons"),("4b","Drugs"),("4c","Fake documents"),("4d","Counterfeit money"),("4e","Hacking tools"),("4f","Counterfeit merch"),("4g","Other")]),
+    "5":  ("🔞 Illegal Adult Content",   [("5a","Child abuse"),("5b","Illegal sexual service"),("5c","Animal abuse"),("5d","Non-consensual imagery"),("5e","Pornography"),("5f","Other illegal sexual")]),
+    "6":  ("🧾 Personal Data",           [("6a","Private images"),("6b","Private number"),("6c","Address"),("6d","Credentials"),("6e","Other personal data")]),
+    "7":  ("💸 Scam or Fraud",           [("7a","Impersonation"),("7b","Financial scams"),("7c","Malware/phishing"),("7d","Fraudulent seller")]),
+    "8":  ("©️ Copyright",               []),
+    "9":  ("🔎 Other",                   []),
+    "10": ("⚠️ Not illegal but remove",  []),
 }
 
 tmp = {}
 
 
 def cancel_kb():
-    return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="cancel_flow")]])
+    return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel / Stop", callback_data="cancel_flow")]])
 
 
 def main_menu_kb():
@@ -53,7 +54,7 @@ def main_menu_kb():
          InlineKeyboardButton("📊 Status",      callback_data="status")],
         [InlineKeyboardButton("🚨 Mass Report", callback_data="start_report"),
          InlineKeyboardButton("📋 Sessions",    callback_data="sessions")],
-        [InlineKeyboardButton("❔ Help",         callback_data="help")],
+        [InlineKeyboardButton("❔ Help", callback_data="help")],
     ])
 
 
@@ -68,45 +69,97 @@ async def cancel_flow(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         await update.callback_query.answer("Cancelled.")
         await update.callback_query.edit_message_text(
-            "❌ *Cancelled.*", parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_kb()
+            "❌ *Cancelled.*\n\nNo session was saved.",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=main_menu_kb()
         )
     elif update.effective_message:
-        await update.effective_message.reply_text("❌ Cancelled.", reply_markup=main_menu_kb())
+        await update.effective_message.reply_text(
+            "❌ Cancelled.", reply_markup=main_menu_kb()
+        )
     return ConversationHandler.END
 
 
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🤖 *Mass Report Bot*\n\n_Multi-account • Proxy Rotation • MongoDB Sessions_",
+        "🤖 *Mass Report Bot*\n\n_Multi-account • Fast Parallel Reports • MongoDB Sessions_",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=main_menu_kb()
     )
 
 
 async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    text = (
-        "🤖 *MASS REPORT BOT — HELP*\n\n"
-        "*/start* — Main menu\n"
-        "*/host* — Add a Telegram account\n"
-        "*/status* — Bot + account stats\n"
-        "*/session* — List saved accounts\n"
-        "*/unhost +91xxx* — Remove an account\n"
-        "*/join <link/@user>* — Join with all accounts\n"
-        "*/cancel* — Cancel current flow\n\n"
+    help_text = (
+        "🤖 *MASS REPORT BOT — COMMANDS*\n\n"
+        "*/start* — Open main menu\n"
+        "*/host* — Add/host a Telegram account (OTP + optional 2FA)\n"
+        "*/status* — Show account and bot status\n"
+        "*/session* — List saved account phone numbers\n"
+        "*/unhost +919876543210* — Remove a saved session by phone\n"
+        "*/join <link or @username>* — Join a chat with all accounts\n"
+        "*/cancel* — Cancel an active setup flow\n"
+        "*/help* — Show this command list\n\n"
         "*Target formats for reporting:*\n"
-        "• `@username` — user or channel\n"
-        "• `https://t.me/username` — peer\n"
+        "• `@username` — user, bot, channel\n"
+        "• `https://t.me/username` — peer link\n"
         "• `https://t.me/username/123` — specific message\n"
-        "• `https://t.me/c/CHANNELID/123` — private channel message\n"
-        "• Numeric Telegram ID"
+        "• `https://t.me/c/CHANNELID/123` — private channel msg\n"
+        "• Numeric Telegram user ID"
     )
     if update.callback_query:
         await update.callback_query.edit_message_text(
-            text, parse_mode=ParseMode.MARKDOWN,
+            help_text, parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back")]])
         )
     else:
-        await update.effective_message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_kb())
+        await update.effective_message.reply_text(
+            help_text, parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_kb()
+        )
+
+
+async def host_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await update.effective_message.reply_text(
+        "📱 Enter phone number with country code:\n\nExample: `+919876543210`\n\nUse /cancel to stop.",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=cancel_kb()
+    )
+    return ADD_PHONE
+
+
+async def session_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    from session_manager import get_user_sessions
+    sessions = await get_user_sessions(update.effective_user.id)
+    lines = [f"`{i}. {item.get('phone', 'Unknown')}`" for i, item in enumerate(sessions, start=1)]
+    message = "📋 *Saved Sessions*\n\n" + ("\n".join(lines) if lines else "No active sessions found.")
+    await update.effective_message.reply_text(
+        message, parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_kb()
+    )
+
+
+async def unhost_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not ctx.args:
+        await update.effective_message.reply_text(
+            "Usage: `/unhost +919876543210`", parse_mode=ParseMode.MARKDOWN
+        )
+        return
+    phone = ctx.args[0].strip()
+    if not phone.startswith("+") or not phone[1:].isdigit():
+        await update.effective_message.reply_text(
+            "❌ Invalid phone number. Include country code, e.g. `+919876543210`.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+    removed = await delete_session(phone, update.effective_user.id)
+    if removed:
+        await update.effective_message.reply_text(
+            f"✅ Session `{phone}` removed.",
+            parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_kb()
+        )
+    else:
+        await update.effective_message.reply_text(
+            f"ℹ️ No session found for `{phone}`.",
+            parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_kb()
+        )
 
 
 async def status_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -121,38 +174,13 @@ async def status_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"🔴 Expired IDs  : `{expired}`\n"
         f"📦 Total IDs    : `{total}`\n"
     )
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back")]])
     if update.message:
         await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
     else:
-        await update.callback_query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=kb)
-
-
-async def session_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    sessions = await get_all_sessions()
-    lines = [f"`{i}. {s.get('phone','?')}`" for i, s in enumerate(sessions, 1)]
-    msg = "📋 *Saved Sessions*\n\n" + ("\n".join(lines) if lines else "No sessions found.")
-    await update.effective_message.reply_text(msg, parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_kb())
-
-
-async def unhost_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not ctx.args:
-        await update.effective_message.reply_text("Usage: `/unhost +919876543210`", parse_mode=ParseMode.MARKDOWN)
-        return
-    phone = ctx.args[0].strip()
-    removed = await delete_session(phone, update.effective_user.id)
-    if removed:
-        await update.effective_message.reply_text(f"✅ `{phone}` removed.", parse_mode=ParseMode.MARKDOWN)
-    else:
-        await update.effective_message.reply_text(f"ℹ️ No session for `{phone}`.", parse_mode=ParseMode.MARKDOWN)
-
-
-async def host_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.effective_message.reply_text(
-        "📱 Enter phone number with country code:\n\nExample: `+919876543210`",
-        parse_mode=ParseMode.MARKDOWN, reply_markup=cancel_kb()
-    )
-    return ADD_PHONE
+        await update.callback_query.edit_message_text(
+            text, parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back")]])
+        )
 
 
 async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -163,7 +191,9 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if data == "back":
         await q.edit_message_text(
-            "🤖 *Mass Report Bot*", parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_kb()
+            "🤖 *Mass Report Bot*",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=main_menu_kb()
         )
         return ConversationHandler.END
 
@@ -177,7 +207,7 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if data == "sessions":
         sessions = await get_all_sessions()
-        lines = [f"`{i}. {s['phone']}`" for i, s in enumerate(sessions, 1)] or ["No active sessions."]
+        lines = [f"`{i}. {s['phone']}`" for i, s in enumerate(sessions, start=1)] or ["No active sessions."]
         await q.edit_message_text(
             "📋 *Active Sessions:*\n\n" + "\n".join(lines),
             parse_mode=ParseMode.MARKDOWN,
@@ -187,8 +217,9 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if data == "add_account":
         await q.edit_message_text(
-            "📱 Enter phone number with country code:\n\nExample: `+919876543210`",
-            parse_mode=ParseMode.MARKDOWN, reply_markup=cancel_kb()
+            "📱 Enter phone number with country code:\n\nExample: `+919876543210`\n\nUse /cancel to stop.",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=cancel_kb()
         )
         return ADD_PHONE
 
@@ -199,7 +230,7 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "• `https://t.me/username` — peer link\n"
             "• `https://t.me/username/123` — specific message\n"
             "• `https://t.me/c/CHANNELID/123` — private channel msg\n"
-            "• Numeric Telegram ID",
+            "• Numeric Telegram user ID",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=cancel_kb()
         )
@@ -214,7 +245,7 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if not subs:
             tmp[uid]["reason"] = cat
             await q.edit_message_text(
-                "✍️ *Report message:*\n\nType what you want to write in the report (1-512 chars):",
+                "✍️ *Report message:*\n\nType what you want written in the report:",
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=cancel_kb()
             )
@@ -233,7 +264,7 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             tmp[uid] = {}
         tmp[uid]["reason"] = data[4:]
         await q.edit_message_text(
-            "✍️ *Report message:*\n\nType what you want to write in the report (1-512 chars):",
+            "✍️ *Report message:*\n\nType what you want written in the report:",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=cancel_kb()
         )
@@ -244,7 +275,8 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if not sessions:
             await q.edit_message_text(
                 "❌ *No active sessions.*\n\nAdd accounts first via ➕ Add Account.",
-                parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_kb()
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=main_menu_kb()
             )
             return ConversationHandler.END
 
@@ -252,22 +284,34 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         reason         = tmp[uid]["reason"]
         count          = tmp[uid]["count"]
         report_message = tmp[uid]["report_message"]
+        total_ids      = len(sessions)
+        total_expected = total_ids * count
 
         await q.edit_message_text("⏳ *Mass reporting started...*", parse_mode=ParseMode.MARKDOWN)
-        sent_msg = await q.message.reply_text("📡 Starting...")
 
-        progress = {"last": 0}
+        sent_msg = await q.message.reply_text(
+            f"📡 *Reporting in progress...*\n\n"
+            f"✅ Success  : `0`\n"
+            f"❌ Failed   : `0`\n"
+            f"🔴 Expired  : `0`\n"
+            f"📊 Done     : `0 / {total_expected}`",
+            parse_mode=ParseMode.MARKDOWN
+        )
+
+        last_edit = {"t": 0}
 
         async def cb(r):
-            total_done = r["success"] + r["failed"] + r["expired"]
-            if total_done - progress["last"] >= 3 or total_done == len(sessions) * count:
-                progress["last"] = total_done
+            now = time.time()
+            done = r["success"] + r["failed"] + r["expired"]
+            if now - last_edit["t"] >= 1 or done >= total_expected:
+                last_edit["t"] = now
                 try:
                     await sent_msg.edit_text(
                         f"📡 *Reporting in progress...*\n\n"
-                        f"✅ Success : `{r['success']}`\n"
-                        f"❌ Failed  : `{r['failed']}`\n"
-                        f"🔴 Expired : `{r['expired']}`",
+                        f"✅ Success  : `{r['success']}`\n"
+                        f"❌ Failed   : `{r['failed']}`\n"
+                        f"🔴 Expired  : `{r['expired']}`\n"
+                        f"📊 Done     : `{done} / {total_expected}`",
                         parse_mode=ParseMode.MARKDOWN
                     )
                 except Exception:
@@ -278,9 +322,9 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
 
         err_summary = ""
-        if result["errors"]:
-            unique_errors = list(set(result["errors"]))[:3]
-            err_summary = "\n⚠️ Errors: `" + "` | `".join(unique_errors) + "`"
+        if result.get("errors"):
+            unique_errors = list(set(result["errors"]))[:2]
+            err_summary = "\n⚠️ `" + "` | `".join(unique_errors) + "`"
 
         await sent_msg.edit_text(
             "╔══════════════════╗\n"
@@ -290,7 +334,8 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"✅ Success  : `{result['success']}`\n"
             f"❌ Failed   : `{result['failed']}`\n"
             f"🔴 Expired  : `{result['expired']}`\n"
-            f"👥 Total IDs: `{len(sessions)}`"
+            f"👥 Total IDs: `{total_ids}`\n"
+            f"📊 Total    : `{total_ids * count}`"
             f"{err_summary}",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=main_menu_kb()
@@ -313,7 +358,10 @@ async def recv_phone(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🔑 Enter the OTP you received:", reply_markup=cancel_kb())
         return ADD_CODE
     except Exception as e:
-        await update.message.reply_text(f"❌ Error: `{e}`\n\nTry again or /cancel", parse_mode=ParseMode.MARKDOWN)
+        await update.message.reply_text(
+            f"❌ Error: `{e}`\n\nTry again or /cancel",
+            parse_mode=ParseMode.MARKDOWN
+        )
         return ADD_PHONE
 
 
@@ -327,13 +375,14 @@ async def recv_code(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await save_session(uid, data["phone"], session_str)
         await data["client"].disconnect()
         await update.message.reply_text(
-            f"✅ Account `{data['phone']}` added successfully!",
-            parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_kb()
+            f"✅ Account `{data['phone']}` added!",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=main_menu_kb()
         )
         tmp.pop(uid, None)
         return ConversationHandler.END
     except Exception as e:
-        if "2FA" in str(e) or "password" in str(e).lower() or "SessionPasswordNeeded" in str(e):
+        if "SessionPasswordNeeded" in str(e) or "2FA" in str(e) or "password" in str(e).lower():
             await update.message.reply_text("🔐 Enter your 2FA password:", reply_markup=cancel_kb())
             return ADD_2FA
         await update.message.reply_text(f"❌ OTP error: `{e}`", parse_mode=ParseMode.MARKDOWN)
@@ -351,7 +400,8 @@ async def recv_2fa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await data["client"].disconnect()
         await update.message.reply_text(
             f"✅ Account `{data['phone']}` added!",
-            parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_kb()
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=main_menu_kb()
         )
         tmp.pop(uid, None)
     except Exception as e:
@@ -374,7 +424,7 @@ async def recv_target(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def recv_report_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
+    uid  = update.effective_user.id
     text = update.message.text.strip()
     if not text:
         await update.message.reply_text("❌ Report message cannot be empty. Type a message:")
@@ -409,7 +459,7 @@ async def recv_count(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "⚠️ *Confirm Report*\n\n"
         f"🎯 Target         : `{t['target']}`\n"
         f"📋 Reason         : `{t['reason']}`\n"
-        f"✍️ Report message : `{t['report_message'][:60]}{'...' if len(t['report_message']) > 60 else ''}`\n"
+        f"✍️ Message        : `{t['report_message'][:60]}{'...' if len(t['report_message']) > 60 else ''}`\n"
         f"🔢 Per ID         : `{count}`\n"
         f"👥 Active IDs     : `{len(sessions)}`\n"
         f"📊 Total reports  : `{len(sessions) * count}`",
@@ -429,19 +479,53 @@ async def join_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.MARKDOWN
         )
         return
+
     target   = ctx.args[0]
     sessions = await get_all_sessions()
     if not sessions:
         await update.message.reply_text("❌ No active sessions found.")
         return
 
-    msg = await update.message.reply_text(f"⏳ Joining `{target}` with {len(sessions)} accounts...", parse_mode=ParseMode.MARKDOWN)
-    result = await mass_join(sessions, target)
+    total = len(sessions)
+    msg = await update.message.reply_text(
+        f"⏳ *Joining* `{target}`\n\n"
+        f"✅ Joined  : `0`\n"
+        f"🔄 Already : `0`\n"
+        f"❌ Failed  : `0`\n"
+        f"📊 Done    : `0 / {total}`",
+        parse_mode=ParseMode.MARKDOWN
+    )
+
+    last_edit = {"t": 0}
+
+    async def progress_cb(r):
+        now  = time.time()
+        done = r["joined"] + r["already"] + r["failed"]
+        if now - last_edit["t"] >= 1 or done >= total:
+            last_edit["t"] = now
+            try:
+                await msg.edit_text(
+                    f"⏳ *Joining* `{target}`\n\n"
+                    f"✅ Joined  : `{r['joined']}`\n"
+                    f"🔄 Already : `{r['already']}`\n"
+                    f"❌ Failed  : `{r['failed']}`\n"
+                    f"📊 Done    : `{done} / {total}`",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            except Exception:
+                pass
+
+    result = await mass_join(sessions, target, progress_cb=progress_cb)
 
     await msg.edit_text(
-        f"✅ Joined    : `{result['joined']}`\n"
-        f"🔄 Already  : `{result['already']}`\n"
-        f"❌ Failed    : `{result['failed']}`",
+        "╔══════════════════╗\n"
+        "║    ✅ JOIN DONE   ║\n"
+        "╚══════════════════╝\n\n"
+        f"🎯 Target  : `{target}`\n"
+        f"✅ Joined  : `{result['joined']}`\n"
+        f"🔄 Already : `{result['already']}`\n"
+        f"❌ Failed  : `{result['failed']}`\n"
+        f"👥 Total   : `{total}`",
         parse_mode=ParseMode.MARKDOWN
     )
 
@@ -489,13 +573,13 @@ def main():
         asyncio.create_task(rotate_forever())
         await app.bot.set_my_commands([
             BotCommand("start",   "Main menu"),
-            BotCommand("host",    "Add a Telegram account"),
+            BotCommand("host",    "Add/host a Telegram account"),
             BotCommand("status",  "Bot status"),
-            BotCommand("session", "List saved accounts"),
-            BotCommand("unhost",  "Remove an account"),
+            BotCommand("session", "List saved sessions"),
+            BotCommand("unhost",  "Remove a saved session by phone"),
             BotCommand("join",    "Join with all accounts"),
             BotCommand("cancel",  "Cancel current flow"),
-            BotCommand("help",    "Help & commands"),
+            BotCommand("help",    "Show all commands"),
         ])
 
     app.post_init = on_startup
