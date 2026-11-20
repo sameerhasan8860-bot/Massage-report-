@@ -43,6 +43,26 @@ REASONS = {
 
 tmp = {}  # user state temp storage
 
+def cancel_kb():
+    return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel / Stop", callback_data="cancel_flow")]])
+
+async def cancel_flow(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    data = tmp.pop(uid, None)
+    if data and data.get("client"):
+        try:
+            await data["client"].disconnect()
+        except Exception:
+            pass
+
+    if update.callback_query:
+        q = update.callback_query
+        await q.answer("Process cancelled.")
+        await q.edit_message_text("❌ *Host process cancelled.*\n\nNo new session was saved.", parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_kb())
+    elif update.effective_message:
+        await update.effective_message.reply_text("❌ Host process cancelled. No new session was saved.", reply_markup=main_menu_kb())
+    return ConversationHandler.END
+
 def main_menu_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ Add Account", callback_data="add_account"),
@@ -105,7 +125,7 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "add_account":
-        await q.edit_message_text("📱 Enter phone number with country code:\n\nExample: `+919876543210`", parse_mode=ParseMode.MARKDOWN)
+        await q.edit_message_text("📱 Enter phone number with country code:\n\nExample: `+919876543210`\n\nUse /cancel or the button below to stop.", parse_mode=ParseMode.MARKDOWN, reply_markup=cancel_kb())
         return ADD_PHONE
 
     if data == "start_report":
@@ -175,7 +195,7 @@ async def recv_phone(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await client.connect()
     tmp[uid] = {"client": client, "phone": phone}
     await client.send_code_request(phone)
-    await update.message.reply_text("🔑 Enter OTP code:")
+    await update.message.reply_text("🔑 Enter OTP code:", reply_markup=cancel_kb())
     return ADD_CODE
 
 async def recv_code(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -186,7 +206,7 @@ async def recv_code(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await data["client"].sign_in(data["phone"], code)
     except Exception as e:
         if "2FA" in str(e) or "password" in str(e).lower():
-            await update.message.reply_text("🔐 Enter your 2FA password:")
+            await update.message.reply_text("🔐 Enter your 2FA password:", reply_markup=cancel_kb())
             tmp[uid]["code"] = code
             return ADD_2FA
         await update.message.reply_text(f"❌ Error: {e}")
@@ -279,7 +299,11 @@ def main():
             REPORT_COUNT:      [MessageHandler(filters.TEXT & ~filters.COMMAND, recv_count)],
             CONFIRM_REPORT:    [CallbackQueryHandler(button_handler, pattern="^confirm_report$")],
         },
-        fallbacks=[CallbackQueryHandler(button_handler, pattern="^back$")],
+        fallbacks=[
+            CommandHandler("cancel", cancel_flow),
+            CallbackQueryHandler(cancel_flow, pattern="^cancel_flow$"),
+            CallbackQueryHandler(button_handler, pattern="^back$")
+        ],
         per_message=False
     )
 
@@ -287,6 +311,7 @@ def main():
     app.add_handler(CommandHandler("status", status_cmd))
     app.add_handler(CommandHandler("join",   join_cmd))
     app.add_handler(conv)
+    app.add_handler(CommandHandler("cancel", cancel_flow))
     app.add_handler(CallbackQueryHandler(button_handler))
 
     async def on_startup(app):
@@ -296,6 +321,7 @@ def main():
             BotCommand("start",  "Main menu"),
             BotCommand("status", "Bot status"),
             BotCommand("join",   "Join with all IDs"),
+            BotCommand("cancel", "Cancel the current host process"),
         ])
 
     app.post_init = on_startup
