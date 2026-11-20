@@ -43,17 +43,36 @@ REASONS = {
 tmp = {}
 
 
+_BUTTON_STYLE_INDEX = 0
+
+def colored_button(text, **kwargs):
+    """Create a Telegram inline button with a native Bot API color style."""
+    global _BUTTON_STYLE_INDEX
+    action = (str(text) + " " + str(kwargs.get("callback_data", ""))).lower()
+    if any(word in action for word in ("cancel", "back", "stop", "delete")):
+        style = "danger"
+    elif any(word in action for word in ("confirm", "start reporting", "add account")):
+        style = "success"
+    else:
+        # Telegram supports only three native button colors; rotate them for variety.
+        styles = ("primary", "success", "danger")
+        style = styles[_BUTTON_STYLE_INDEX % len(styles)]
+        _BUTTON_STYLE_INDEX += 1
+    return InlineKeyboardButton(text, style=style, **kwargs)
+
+
+
 def cancel_kb():
-    return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel / Stop", callback_data="cancel_flow")]])
+    return InlineKeyboardMarkup([[colored_button("❌ Cancel / Stop", callback_data="cancel_flow")]])
 
 
 def main_menu_kb():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ Add Account", callback_data="add_account"),
-         InlineKeyboardButton("📊 Status",      callback_data="status")],
-        [InlineKeyboardButton("🚨 Mass Report", callback_data="start_report"),
-         InlineKeyboardButton("📋 Sessions",    callback_data="sessions")],
-        [InlineKeyboardButton("❔ Help", callback_data="help")],
+        [colored_button("➕ Add Account", callback_data="add_account"),
+         colored_button("📊 Status",      callback_data="status")],
+        [colored_button("🚨 Mass Report", callback_data="start_report"),
+         colored_button("📋 Sessions",    callback_data="sessions")],
+        [colored_button("❔ Help", callback_data="help")],
     ])
 
 
@@ -108,7 +127,7 @@ async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         await update.callback_query.edit_message_text(
             help_text, parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back")]])
+            reply_markup=InlineKeyboardMarkup([[colored_button("🔙 Back", callback_data="back")]])
         )
     else:
         await update.effective_message.reply_text(
@@ -178,7 +197,7 @@ async def status_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     else:
         await update.callback_query.edit_message_text(
             text, parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back")]])
+            reply_markup=InlineKeyboardMarkup([[colored_button("🔙 Back", callback_data="back")]])
         )
 
 
@@ -210,7 +229,7 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text(
             "📋 *Active Sessions:*\n\n" + "\n".join(lines),
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back")]])
+            reply_markup=InlineKeyboardMarkup([[colored_button("🔙 Back", callback_data="back")]])
         )
         return
 
@@ -249,8 +268,8 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 reply_markup=cancel_kb()
             )
             return REPORT_MESSAGE
-        kb = [[InlineKeyboardButton(label, callback_data=f"sub_{key}")] for key, label in subs]
-        kb.append([InlineKeyboardButton("🔙 Back", callback_data="start_report")])
+        kb = [[colored_button(label, callback_data=f"sub_{key}")] for key, label in subs]
+        kb.append([colored_button("🔙 Back", callback_data="start_report")])
         await q.edit_message_text(
             f"📂 *{REASONS[cat][0]}*\n\nSelect sub-reason:",
             parse_mode=ParseMode.MARKDOWN,
@@ -413,7 +432,7 @@ async def recv_target(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid    = update.effective_user.id
     target = update.message.text.strip()
     tmp[uid] = {"target": target}
-    kb = [[InlineKeyboardButton(v[0], callback_data=f"cat_{k}")] for k, v in REASONS.items()]
+    kb = [[colored_button(v[0], callback_data=f"cat_{k}")] for k, v in REASONS.items()]
     await update.message.reply_text(
         f"📂 *Select report category:*\n\n🎯 Target: `{target}`",
         parse_mode=ParseMode.MARKDOWN,
@@ -464,8 +483,8 @@ async def recv_count(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"📊 Total reports  : `{len(sessions) * count}`",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Start Reporting", callback_data="confirm_report"),
-             InlineKeyboardButton("❌ Cancel",          callback_data="back")]
+            [colored_button("✅ Start Reporting", callback_data="confirm_report"),
+             colored_button("❌ Cancel",          callback_data="back")]
         ])
     )
     return CONFIRM_REPORT
