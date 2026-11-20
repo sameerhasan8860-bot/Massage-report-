@@ -9,7 +9,6 @@ from telethon.tl.functions.messages import ImportChatInviteRequest
 from telethon.errors import (
     UserAlreadyParticipantError,
     FloodWaitError,
-    ChatAdminRequiredError,
     UserDeactivatedError,
     AuthKeyUnregisteredError,
     SessionRevokedError,
@@ -24,6 +23,7 @@ from telethon.tl.types import (
     InputReportReasonFake,
     InputReportReasonIllegalDrugs,
     InputReportReasonPersonalDetails,
+    PeerChannel,
 )
 from session_manager import mark_expired
 
@@ -74,12 +74,20 @@ SESSION_ERRORS = (
 
 
 def parse_message_link(target: str):
-    m = re.match(r"https?://t\.me/([a-zA-Z0-9_]+)/(\d+)", target)
-    if m:
-        return m.group(1), int(m.group(2))
+    """
+    Private pattern checked FIRST — prevents 'c' being captured as username.
+    Returns (chat_id, msg_id) or (None, None).
+    """
+    # PRIVATE: https://t.me/c/1234567890/123
     m = re.match(r"https?://t\.me/c/(\d+)/(\d+)", target)
     if m:
         return int("-100" + m.group(1)), int(m.group(2))
+
+    # PUBLIC: https://t.me/username/123
+    m = re.match(r"https?://t\.me/([a-zA-Z0-9_]+)/(\d+)", target)
+    if m:
+        return m.group(1), int(m.group(2))
+
     return None, None
 
 
@@ -92,31 +100,76 @@ def extract_invite_hash(target: str) -> str:
     return m.group(1) if m else target.lstrip("+")
 
 
+async def _get_entity_safe(client, chat_id):
+    """
+    Try direct get_entity.
+    If fails → populate dialogs cache → retry.
+    If still fails and it's a private channel int ID → try PeerChannel directly.
+    """
+    try:
+        return await client.get_entity(chat_id)
+    except Exception:
+        pass
+
+    try:
+        await client.get_dialogs(limit=200)
+    except Exception:
+        pass
+
+    try:
+        return await client.get_entity(chat_id)
+    except Exception:
+        pass
+
+    if isinstance(chat_id, int) and chat_id < 0:
+        try:
+            raw_id = int(str(abs(chat_id))[3:])
+            return await client.get_entity(PeerChannel(raw_id))
+        except Exception as e:
+            raise ValueError(f"Cannot resolve private channel: {e}")
+
+    raise ValueError(f"Cannot resolve entity: {chat_id}")
+
+
 async def report_once(client, target, reason_key, report_message) -> tuple[bool, str]:
     reason = REASON_MAP.get(reason_key, InputReportReasonSpam())
     try:
         chat_id, msg_id = parse_message_link(target)
+
         if chat_id is not None and msg_id is not None:
-            entity = await client.get_entity(chat_id)
+            try:
+                entity = await _get_entity_safe(client, chat_id)
+            except Exception as e:
+                return False, f"entity_error: {e}"
+
             result = await client(ReportRequest(
                 peer=entity,
                 id=[msg_id],
                 reason=reason,
                 message=report_message,
             ))
+            return (True, "") if result else (False, "rejected_by_telegram")
+
         else:
-            entity = await client.get_entity(target)
+            try:
+                entity = await _get_entity_safe(client, target)
+            except Exception as e:
+                return False, f"entity_error: {e}"
+
             result = await client(ReportPeerRequest(
                 peer=entity,
                 reason=reason,
                 message=report_message,
             ))
-        return (True, "") if result else (False, "rejected_by_telegram")
+            return (True, "") if result else (False, "rejected_by_telegram")
+
     except SESSION_ERRORS as e:
         raise ConnectionError("session_expired") from e
     except FloodWaitError as e:
         await asyncio.sleep(e.seconds)
         return False, f"flood_wait_{e.seconds}s"
+    except ConnectionError:
+        raise
     except Exception as e:
         return False, str(e)
 
@@ -170,10 +223,10 @@ async def mass_report(
                 finally:
                     if progress_cb:
                         await progress_cb(results)
-                # 1 report per second per ID
                 await asyncio.sleep(1)
 
             await client.disconnect()
+
         except Exception as e:
             results["failed"] += count_per_id
             err = str(e)
@@ -182,7 +235,6 @@ async def mass_report(
             if progress_cb:
                 await progress_cb(results)
 
-    # All IDs run simultaneously
     await asyncio.gather(*[worker(s) for s in sessions])
     return results
 
@@ -228,6 +280,7 @@ async def mass_join(
                     logger.warning(f"join error [{phone}]: {e}")
 
             await client.disconnect()
+
         except Exception as e:
             results["failed"] += 1
             logger.warning(f"worker error [{phone}]: {e}")
