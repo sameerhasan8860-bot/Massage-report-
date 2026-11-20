@@ -7,6 +7,7 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, CallbackQueryHandler,
     MessageHandler, ConversationHandler, ContextTypes, filters
 )
+from telegram.request import HTTPXRequest
 from telegram.constants import ParseMode
 from config import BOT_TOKEN, API_ID, API_HASH
 from telethon import TelegramClient
