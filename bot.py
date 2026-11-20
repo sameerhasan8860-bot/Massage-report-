@@ -365,7 +365,10 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     conv = ConversationHandler(
-        entry_points=[\n            CommandHandler("host", host_cmd),\n            CallbackQueryHandler(button_handler, pattern="^(add_account|start_report)$")\n        ],
+        entry_points=[
+            CommandHandler("host", host_cmd),
+            CallbackQueryHandler(button_handler, pattern="^(add_account|start_report)$")
+        ],
         states={
             ADD_PHONE:         [MessageHandler(filters.TEXT & ~filters.COMMAND, recv_phone)],
             ADD_CODE:          [MessageHandler(filters.TEXT & ~filters.COMMAND, recv_code)],
@@ -384,7 +387,8 @@ def main():
         per_message=False
     )
 
-    app.add_handler(CommandHandler("start",  start))\n    app.add_handler(CommandHandler("status", status_cmd))
+    app.add_handler(CommandHandler("start",  start))
+    app.add_handler(CommandHandler("status", status_cmd))
     app.add_handler(CommandHandler("session", session_cmd))
     app.add_handler(CommandHandler("unhost", unhost_cmd))
     app.add_handler(CommandHandler("help", help_cmd))
@@ -397,7 +401,8 @@ def main():
         await fetch_proxies()
         asyncio.create_task(rotate_forever())
         await app.bot.set_my_commands([
-            BotCommand("start",  "Main menu"),\n            BotCommand("host", "Add/host a Telegram account"),
+            BotCommand("start",  "Main menu"),
+            BotCommand("host", "Add/host a Telegram account"),
             BotCommand("status", "Bot status"),
             BotCommand("session", "List saved sessions"),
             BotCommand("unhost", "Remove a saved session by phone"),
