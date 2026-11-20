@@ -104,7 +104,8 @@ async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def session_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    sessions = await get_all_sessions()
+    from session_manager import get_user_sessions
+    sessions = await get_user_sessions(update.effective_user.id)
     lines = [f"`{i}. {item.get('phone', 'Unknown')}`" for i, item in enumerate(sessions, start=1)]
     message = "📋 *Saved Sessions*\n\n" + ("\n".join(lines) if lines else "No active sessions found.")
     await update.effective_message.reply_text(
@@ -125,7 +126,7 @@ async def unhost_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.MARKDOWN
         )
         return
-    removed = await delete_session(phone)
+    removed = await delete_session(phone, update.effective_user.id)
     if removed:
         await update.effective_message.reply_text(
             f"✅ Session `{phone}` has been removed from MongoDB.",
