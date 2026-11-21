@@ -42,7 +42,8 @@ REASONS = {
     "10": ("⚠️ Not illegal but remove",  []),
 }
 
-tmp = {}\n
+tmp = {}
+
 ALLOWED_USER_COMMANDS = {"/start", "/host", "/cancel", "/help"}
 ALLOWED_USER_CALLBACKS = {"add_account", "cancel_flow", "help", "back"}
 
@@ -218,7 +219,7 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🤖 *Mass Report Bot*\n\n_Multi-account • Fast Parallel Reports • MongoDB Sessions_",
         parse_mode=ParseMode.MARKDOWN,
-        reply_markup=main_menu_kb()
+        reply_markup=await menu_for_user(update.effective_user.id)
     )
 
 
