@@ -786,7 +786,8 @@ def main():
 
     app.add_handler(CommandHandler("sudo", sudo_cmd))
     app.add_handler(CommandHandler("removesudo", removesudo_cmd))
-    app.add_handler(CommandHandler("sudoinfo", sudoinfo_cmd))\n    app.add_handler(CommandHandler("start",   start))
+    app.add_handler(CommandHandler("sudoinfo", sudoinfo_cmd))
+    app.add_handler(CommandHandler("start",   start))
     app.add_handler(CommandHandler("status",  status_cmd))
     app.add_handler(CommandHandler("session", session_cmd))
     app.add_handler(CommandHandler("unhost",  unhost_cmd))
@@ -808,7 +809,10 @@ def main():
             BotCommand("unhost",  "Remove a saved session by phone"),
             BotCommand("join",    "Join with all accounts"),
             BotCommand("cancel",  "Cancel current flow"),
-            BotCommand("help",    "Show all commands"),\n            BotCommand("sudo", "Grant sudo access (owner only)"),\n            BotCommand("sudoinfo", "Show owner and sudo users (owner only)"),
+            BotCommand("help",    "Show all commands"),
+            BotCommand("sudo", "Grant sudo access (owner only)"),
+            BotCommand("removesudo", "Remove sudo access (owner only)"),
+            BotCommand("sudoinfo", "Show owner and sudo users"),
         ])
 
     app.post_init = on_startup
