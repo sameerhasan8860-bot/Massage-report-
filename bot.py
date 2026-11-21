@@ -182,6 +182,16 @@ def main_menu_kb():
     ])
 
 
+def limited_menu_kb():
+    return InlineKeyboardMarkup([
+        [colored_button("➕ Add Account", callback_data="add_account")],
+        [colored_button("❔ Help", callback_data="help")],
+    ])
+
+async def menu_for_user(user_id: int):
+    return main_menu_kb() if is_owner(user_id) or await is_sudo(user_id) else limited_menu_kb()
+
+
 async def cancel_flow(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     data = tmp.pop(uid, None)
@@ -195,7 +205,7 @@ async def cancel_flow(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.edit_message_text(
             "❌ *Cancelled.*\n\nNo session was saved.",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=main_menu_kb()
+            reply_markup=await menu_for_user(uid)
         )
     elif update.effective_message:
         await update.effective_message.reply_text(
@@ -237,7 +247,7 @@ async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
     else:
         await update.effective_message.reply_text(
-            help_text, parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_kb()
+            help_text, parse_mode=ParseMode.MARKDOWN, reply_markup=await menu_for_user(update.effective_user.id)
         )
 
 
@@ -317,7 +327,7 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text(
             "🤖 *Mass Report Bot*",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=main_menu_kb()
+            reply_markup=await menu_for_user(uid)
         )
         return ConversationHandler.END
 
@@ -462,7 +472,7 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"📊 Total    : `{total_ids * count}`"
             f"{err_summary}",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=main_menu_kb()
+            reply_markup=await menu_for_user(uid)
         )
         tmp.pop(uid, None)
         return ConversationHandler.END
@@ -501,7 +511,7 @@ async def recv_code(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"✅ Account `{data['phone']}` added!",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=main_menu_kb()
+            reply_markup=await menu_for_user(uid)
         )
         tmp.pop(uid, None)
         return ConversationHandler.END
