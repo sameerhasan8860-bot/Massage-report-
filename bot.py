@@ -53,17 +53,32 @@ def is_owner(user_id: int) -> bool:
 
 async def deny_non_sudo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     username = OWNER_USERNAME.lstrip("@")
-    owner_link = f"@{username}" if username else "the bot owner"
+    owner_link = f"@{html.escape(username)}" if username else "@NODDY_FUCKER"
     message = (
-        "🚫 YOU ARE NO SUDO USER\n\n"
-        f"Full bot access ke liye owner {owner_link} ko DM karein."
+        "🔒 <b>ACCESS DENIED</b>\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🚫 You are not authorized to access this feature.\n\n"
+        "This command is restricted to <b>Owner &amp; Sudo Users</b> only.\n\n"
+        "👑 <b>Need Full Bot Access?</b>\n\n"
+        "Contact the Bot Owner to request Sudo Access.\n\n"
+        f"👤 <b>Owner:</b> {owner_link}\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🛡️ <b>SECURE ACCESS • AUTHORIZED USERS ONLY</b>"
     )
     if update.callback_query:
-        await update.callback_query.answer("YOU ARE NO SUDO USER", show_alert=True)
+        await update.callback_query.answer("🔒 ACCESS DENIED", show_alert=True)
         if update.callback_query.message:
-            await update.callback_query.message.reply_text(message)
+            await update.callback_query.message.reply_text(
+                message,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True
+            )
     elif update.effective_message:
-        await update.effective_message.reply_text(message)
+        await update.effective_message.reply_text(
+            message,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True
+        )
 
 async def access_guard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
