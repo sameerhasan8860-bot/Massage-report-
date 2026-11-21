@@ -1,6 +1,7 @@
 import asyncio
 import time
 import logging
+import html
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 )
@@ -68,14 +69,38 @@ async def access_guard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not user:
         raise ApplicationHandlerStop
-    await remember_user(user.id, user.full_name, user.username)
-    if is_owner(user.id) or await is_sudo(user.id):
+
+    # The owner is trusted by the configured OWNER_ID and must not depend on MongoDB.
+    if is_owner(user.id):
         return
+
+    try:
+        await remember_user(user.id, user.full_name, user.username)
+        user_is_sudo = await is_sudo(user.id)
+    except Exception:
+        logging.exception("Access database check failed for user %s", user.id)
+        if update.callback_query:
+            await update.callback_query.answer(
+                "Access service temporarily unavailable. Try again shortly.",
+                show_alert=True
+            )
+        elif update.effective_message:
+            await update.effective_message.reply_text(
+                "⚠️ <b>ACCESS SERVICE UNAVAILABLE</b>\n\n"
+                "The access database could not be reached. Please try again shortly.",
+                parse_mode=ParseMode.HTML
+            )
+        raise ApplicationHandlerStop
+
+    if user_is_sudo:
+        return
+
     if update.callback_query:
         if update.callback_query.data in ALLOWED_USER_CALLBACKS:
             return
         await deny_non_sudo(update, ctx)
         raise ApplicationHandlerStop
+
     message = update.effective_message
     text_value = message.text or "" if message else ""
     command = text_value.split(maxsplit=1)[0].split("@", 1)[0].lower() if text_value.startswith("/") else ""
@@ -85,15 +110,28 @@ async def access_guard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     raise ApplicationHandlerStop
 
 async def sudo_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not is_owner(update.effective_user.id):
-        await update.effective_message.reply_text("⛔ Only the bot owner can add sudo users.")
+    user_id = update.effective_user.id
+    if not is_owner(user_id):
+        await update.effective_message.reply_text(
+            "⛔ <b>OWNER ACCESS REQUIRED</b>\n\nOnly the bot owner can grant Sudo access.",
+            parse_mode=ParseMode.HTML
+        )
         return
     if not ctx.args or not ctx.args[0].isdigit():
-        await update.effective_message.reply_text("Usage: /sudo <user_id>\nExample: /sudo 123456789")
+        await update.effective_message.reply_text(
+            "🛡️ <b>GRANT SUDO ACCESS</b>\n\n"
+            "<b>Usage</b>  <code>/sudo USER_ID</code>\n"
+            "<b>Example</b>  <code>/sudo 123456789</code>\n\n"
+            "<i>Enter the numeric Telegram user ID.</i>",
+            parse_mode=ParseMode.HTML
+        )
         return
     target_id = int(ctx.args[0])
     if target_id == OWNER_ID:
-        await update.effective_message.reply_text("ℹ️ Ye user already bot owner hai.")
+        await update.effective_message.reply_text(
+            "👑 <b>ALREADY THE OWNER</b>\n\nThe bot owner already has full access.",
+            parse_mode=ParseMode.HTML
+        )
         return
     try:
         chat = await ctx.bot.get_chat(target_id)
@@ -103,76 +141,128 @@ async def sudo_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         full_name = "Unknown"
         username = None
     await add_sudo(target_id, full_name, username)
-    username_text = f"@{username}" if username else "Not available"
+    username_text = f"@{html.escape(username)}" if username else "Not available"
     await update.effective_message.reply_text(
-        "✅ *Sudo access granted*\n\n"
-        f"👤 Name: {full_name}\n"
-        f"🔗 Username: {username_text}\n"
-        f"🆔 User ID: `{target_id}`",
-        parse_mode=ParseMode.MARKDOWN
+        "✅ <b>SUDO ACCESS GRANTED</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"👤 <b>Name:</b> {html.escape(full_name)}\n"
+        f"🔗 <b>Username:</b> {username_text}\n"
+        f"🆔 <b>User ID:</b> <code>{target_id}</code>\n\n"
+        "<i>This user now has elevated bot access.</i>",
+        parse_mode=ParseMode.HTML
     )
 
 
 async def removesudo_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not is_owner(update.effective_user.id):
-        await update.effective_message.reply_text("⛔ Only the bot owner can remove sudo users.")
+        await update.effective_message.reply_text(
+            "⛔ <b>OWNER ACCESS REQUIRED</b>\n\nOnly the bot owner can revoke Sudo access.",
+            parse_mode=ParseMode.HTML
+        )
         return
     if not ctx.args or not ctx.args[0].isdigit():
         await update.effective_message.reply_text(
-            "Usage: /removesudo <user_id>\nExample: /removesudo 123456789"
+            "🛡️ <b>REVOKE SUDO ACCESS</b>\n\n"
+            "<b>Usage</b>  <code>/removesudo USER_ID</code>\n"
+            "<b>Example</b>  <code>/removesudo 123456789</code>",
+            parse_mode=ParseMode.HTML
         )
         return
     target_id = int(ctx.args[0])
     if target_id == OWNER_ID:
-        await update.effective_message.reply_text("⛔ Owner ko sudo list se remove nahi kiya ja sakta.")
+        await update.effective_message.reply_text(
+            "⛔ <b>OWNER PROTECTED</b>\n\nThe bot owner cannot be removed from the access list.",
+            parse_mode=ParseMode.HTML
+        )
         return
-    removed = await remove_sudo(target_id)
+    try:
+        removed = await remove_sudo(target_id)
+    except Exception:
+        logging.exception("Failed to remove Sudo user %s", target_id)
+        await update.effective_message.reply_text(
+            "⚠️ <b>DATABASE OPERATION FAILED</b>\n\nCould not update Sudo access. Please try again later.",
+            parse_mode=ParseMode.HTML
+        )
+        return
     if removed:
         await update.effective_message.reply_text(
-            f"✅ Sudo access removed.\n\n🆔 User ID: `{target_id}`",
-            parse_mode=ParseMode.MARKDOWN
+            "✅ <b>SUDO ACCESS REVOKED</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            f"🆔 <b>User ID:</b> <code>{target_id}</code>\n\n"
+            "<i>The user will no longer have elevated access.</i>",
+            parse_mode=ParseMode.HTML
         )
     else:
         await update.effective_message.reply_text(
-            f"ℹ️ User ID `{target_id}` sudo list mein nahi mila.",
-            parse_mode=ParseMode.MARKDOWN
+            "ℹ️ <b>NO SUDO RECORD FOUND</b>\n\n"
+            f"No Sudo user exists with ID <code>{target_id}</code>.",
+            parse_mode=ParseMode.HTML
         )
 
-async def sudoinfo_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not (is_owner(update.effective_user.id) or await is_sudo(update.effective_user.id)):
-        await update.effective_message.reply_text("⛔ Only the owner and sudo users can view these details.")
-        return
-    try:
-        owner_chat = await ctx.bot.get_chat(OWNER_ID)
-        owner_name = owner_chat.full_name or update.effective_user.full_name
-        owner_username = owner_chat.username or OWNER_USERNAME.lstrip("@") or None
-    except Exception:
-        owner_name = update.effective_user.full_name if update.effective_user.id == OWNER_ID else "Unknown"
-        owner_username = OWNER_USERNAME.lstrip("@") or None
-    owner_handle = f"@{owner_username}" if owner_username else "Not available"
-    lines = [
-        "👑 *BOT OWNER*",
-        f"Name: {owner_name}",
-        f"Username: {owner_handle}",
-        f"User ID: `{OWNER_ID}`",
-        "",
-        "🛡️ *SUDO USERS*"
-    ]
-    sudo_users = await get_sudo_users()
-    if not sudo_users:
-        lines.append("No sudo users added.")
-    for index, item in enumerate(sudo_users, 1):
-        name = item.get("name") or "Unknown"
-        username = item.get("username")
-        handle = f"@{username}" if username else "Not available"
-        lines.extend([
-            f"{index}. *{name}*",
-            f"Username: {handle}",
-            f"User ID: `{item['user_id']}`",
-            ""
-        ])
-    await update.effective_message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
 
+async def sudoinfo_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    try:
+        permitted = is_owner(user_id) or await is_sudo(user_id)
+    except Exception:
+        logging.exception("Sudo permission lookup failed for %s", user_id)
+        await update.effective_message.reply_text(
+            "⚠️ <b>ACCESS CHECK UNAVAILABLE</b>\n\nThe access database could not be reached. Please try again shortly.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    if not permitted:
+        await update.effective_message.reply_text(
+            "⛔ <b>RESTRICTED COMMAND</b>\n\nOnly the owner and Sudo users can view access details.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    try:
+        try:
+            owner_chat = await ctx.bot.get_chat(OWNER_ID)
+            owner_name = owner_chat.full_name or "Bot Owner"
+            owner_username = owner_chat.username or OWNER_USERNAME.lstrip("@") or None
+        except Exception:
+            owner_name = "Bot Owner"
+            owner_username = OWNER_USERNAME.lstrip("@") or None
+
+        owner_handle = f"@{html.escape(owner_username)}" if owner_username else "Not available"
+        lines = [
+            "👑 <b>BOT OWNER</b>",
+            f"👤 <b>Name:</b> {html.escape(owner_name)}",
+            f"🔗 <b>Username:</b> {owner_handle}",
+            f"🆔 <b>User ID:</b> <code>{OWNER_ID}</code>",
+            "",
+            "🛡️ <b>SUDO USERS</b>",
+            "━━━━━━━━━━━━━━━━━━"
+        ]
+        sudo_users = await get_sudo_users()
+        if not sudo_users:
+            lines.append("<i>No Sudo users have been added.</i>")
+        for index, item in enumerate(sudo_users, 1):
+            name = html.escape(str(item.get("name") or "Unknown"))
+            username = item.get("username")
+            handle = f"@{html.escape(str(username))}" if username else "Not available"
+            lines.extend([
+                f"<b>{index}. {name}</b>",
+                f"   🔗 {handle}",
+                f"   🆔 <code>{int(item['user_id'])}</code>",
+                ""
+            ])
+        await update.effective_message.reply_text(
+            "\n".join(lines),
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True
+        )
+    except Exception:
+        logging.exception("Failed to build Sudo information response")
+        await update.effective_message.reply_text(
+            "⚠️ <b>COULD NOT LOAD SUDO INFORMATION</b>\n\n"
+            "The request reached the command, but the access records could not be displayed. "
+            "Check the MongoDB connection and bot logs, then try again.",
+            parse_mode=ParseMode.HTML
+        )
 
 
 
@@ -250,32 +340,58 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    privileged = is_owner(uid) or await is_sudo(uid)
     help_text = (
-        "🤖 *MASS REPORT BOT — COMMANDS*\n\n"
-        "*/start* — Open main menu\n"
-        "*/host* — Add/host a Telegram account (OTP + optional 2FA)\n"
-        "*/status* — Show account and bot status\n"
-        "*/session* — List saved account phone numbers\n"
-        "*/unhost +919876543210* — Remove a saved session by phone\n"
-        "*/join <link or @username>* — Join a chat with all accounts\n"
-        "*/cancel* — Cancel an active setup flow\n"
-        "*/help* — Show this command list\n\n"
-        "*Target formats for reporting:*\n"
-        "• `@username` — user, bot, channel\n"
-        "• `https://t.me/username` — peer link\n"
-        "• `https://t.me/username/123` — specific message\n"
-        "• `https://t.me/c/CHANNELID/123` — private channel msg\n"
-        "• Numeric Telegram user ID"
+        "🤖 <b>MASS REPORT BOT</b>\n"
+        "<i>Command Center • Quick Reference</i>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "<b>👤 ACCOUNT &amp; MENU</b>\n"
+        "• <code>/start</code> — Open bot menu\n"
+        "• <code>/host</code> — Host an account (OTP / optional 2FA)\n"
+        "• <code>/session</code> — View your saved sessions\n"
+        "• <code>/unhost +919876543210</code> — Remove your hosted session\n"
+        "• <code>/cancel</code> — Cancel the current setup\n"
+        "• <code>/help</code> — Show this command guide\n"
     )
+    if privileged:
+        help_text += (
+            "\n<b>⚙️ BOT OPERATIONS</b>\n"
+            "• <code>/status</code> — View session statistics\n"
+            "• <code>/join @username</code> — Join a chat with hosted accounts\n"
+            "• <code>/otp +919876543210</code> — Retrieve the latest Telegram OTP for a hosted account\n"
+            "• <code>/sudoinfo</code> — View owner and Sudo directory\n"
+        )
+    if is_owner(uid):
+        help_text += (
+            "\n<b>👑 OWNER CONTROLS</b>\n"
+            "• <code>/sudo USER_ID</code> — Grant Sudo access\n"
+            "• <code>/removesudo USER_ID</code> — Revoke Sudo access\n"
+        )
+    if privileged:
+        help_text += (
+            "\n<b>🔐 ACCESS LEVELS</b>\n"
+            "• Owner — Full access + Sudo management\n"
+            "• Sudo — Full bot access + Sudo directory\n"
+        )
+    else:
+        help_text += (
+            "\n<b>🔐 ACCESS LEVEL</b>\n"
+            "• Standard user — Start, host, cancel and help\n"
+            "<i>Contact the bot owner if you need elevated access.</i>\n"
+        )
     if update.callback_query:
         await update.callback_query.edit_message_text(
-            help_text, parse_mode=ParseMode.MARKDOWN,
+            help_text, parse_mode=ParseMode.HTML,
             reply_markup=InlineKeyboardMarkup([[colored_button("🔙 Back", callback_data="back")]])
         )
     else:
         await update.effective_message.reply_text(
-            help_text, parse_mode=ParseMode.MARKDOWN, reply_markup=await menu_for_user(update.effective_user.id)
+            help_text, parse_mode=ParseMode.HTML,
+            reply_markup=await menu_for_user(uid),
+            disable_web_page_preview=True
         )
+
 
 
 async def host_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
