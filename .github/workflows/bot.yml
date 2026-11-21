@@ -37,7 +37,7 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           API_ID: ${{ secrets.API_ID }}
           API_HASH: ${{ secrets.API_HASH }}
-          MONGO_URI: ${{ secrets.MONGO_URI }}
+          MONGO_URI: ${{ secrets.MONGO_URI }}\n          OWNER_ID: ${{ secrets.OWNER_ID }}\n          OWNER_USERNAME: ${{ secrets.OWNER_USERNAME }}
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
