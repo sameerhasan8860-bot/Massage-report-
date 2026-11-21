@@ -9,7 +9,9 @@ from telegram.ext import (
     MessageHandler, ConversationHandler, ContextTypes, filters
 )
 from telegram.constants import ParseMode
-from config import BOT_TOKEN, API_ID, API_HASH
+from telegram.ext import ApplicationHandlerStop
+from config import BOT_TOKEN, API_ID, API_HASH, OWNER_ID, OWNER_USERNAME
+from access_manager import is_sudo, add_sudo, get_sudo_users, remember_user
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from session_manager import (
@@ -40,7 +42,111 @@ REASONS = {
     "10": ("⚠️ Not illegal but remove",  []),
 }
 
-tmp = {}
+tmp = {}\n
+ALLOWED_USER_COMMANDS = {"/start", "/host", "/cancel", "/help"}
+ALLOWED_USER_CALLBACKS = {"add_account", "cancel_flow", "help", "back"}
+
+def is_owner(user_id: int) -> bool:
+    return user_id == OWNER_ID
+
+async def deny_non_sudo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    username = OWNER_USERNAME.lstrip("@")
+    owner_link = f"@{username}" if username else "the bot owner"
+    message = (
+        "🚫 YOU ARE NO SUDO USER\n\n"
+        f"Full bot access ke liye owner {owner_link} ko DM karein."
+    )
+    if update.callback_query:
+        await update.callback_query.answer("YOU ARE NO SUDO USER", show_alert=True)
+        if update.callback_query.message:
+            await update.callback_query.message.reply_text(message)
+    elif update.effective_message:
+        await update.effective_message.reply_text(message)
+
+async def access_guard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not user:
+        raise ApplicationHandlerStop
+    await remember_user(user.id, user.full_name, user.username)
+    if is_owner(user.id) or await is_sudo(user.id):
+        return
+    if update.callback_query:
+        if update.callback_query.data in ALLOWED_USER_CALLBACKS:
+            return
+        await deny_non_sudo(update, ctx)
+        raise ApplicationHandlerStop
+    message = update.effective_message
+    text_value = message.text or "" if message else ""
+    command = text_value.split(maxsplit=1)[0].split("@", 1)[0].lower() if text_value.startswith("/") else ""
+    if command in ALLOWED_USER_COMMANDS:
+        return
+    await deny_non_sudo(update, ctx)
+    raise ApplicationHandlerStop
+
+async def sudo_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(update.effective_user.id):
+        await update.effective_message.reply_text("⛔ Only the bot owner can add sudo users.")
+        return
+    if not ctx.args or not ctx.args[0].isdigit():
+        await update.effective_message.reply_text("Usage: /sudo <user_id>\nExample: /sudo 123456789")
+        return
+    target_id = int(ctx.args[0])
+    if target_id == OWNER_ID:
+        await update.effective_message.reply_text("ℹ️ Ye user already bot owner hai.")
+        return
+    try:
+        chat = await ctx.bot.get_chat(target_id)
+        full_name = chat.full_name or "Unknown"
+        username = chat.username
+    except Exception:
+        full_name = "Unknown"
+        username = None
+    await add_sudo(target_id, full_name, username)
+    username_text = f"@{username}" if username else "Not available"
+    await update.effective_message.reply_text(
+        "✅ *Sudo access granted*\n\n"
+        f"👤 Name: {full_name}\n"
+        f"🔗 Username: {username_text}\n"
+        f"🆔 User ID: `{target_id}`",
+        parse_mode=ParseMode.MARKDOWN
+    )
+
+async def sudoinfo_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(update.effective_user.id):
+        await update.effective_message.reply_text("⛔ Only the bot owner can view sudo details.")
+        return
+    try:
+        owner_chat = await ctx.bot.get_chat(OWNER_ID)
+        owner_name = owner_chat.full_name or update.effective_user.full_name
+        owner_username = owner_chat.username or OWNER_USERNAME.lstrip("@") or None
+    except Exception:
+        owner_name = update.effective_user.full_name if update.effective_user.id == OWNER_ID else "Unknown"
+        owner_username = OWNER_USERNAME.lstrip("@") or None
+    owner_handle = f"@{owner_username}" if owner_username else "Not available"
+    lines = [
+        "👑 *BOT OWNER*",
+        f"Name: {owner_name}",
+        f"Username: {owner_handle}",
+        f"User ID: `{OWNER_ID}`",
+        "",
+        "🛡️ *SUDO USERS*"
+    ]
+    sudo_users = await get_sudo_users()
+    if not sudo_users:
+        lines.append("No sudo users added.")
+    for index, item in enumerate(sudo_users, 1):
+        name = item.get("name") or "Unknown"
+        username = item.get("username")
+        handle = f"@{username}" if username else "Not available"
+        lines.extend([
+            f"{index}. *{name}*",
+            f"Username: {handle}",
+            f"User ID: `{item['user_id']}`",
+            ""
+        ])
+    await update.effective_message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
+
+
 
 
 _BUTTON_STYLE_INDEX = 0
@@ -638,7 +744,7 @@ def main():
         allow_reentry=True,
     )
 
-    app.add_handler(CommandHandler("start",   start))
+    app.add_handler(MessageHandler(filters.COMMAND, access_guard), group=-1)\n    app.add_handler(CallbackQueryHandler(access_guard), group=-1)\n\n    app.add_handler(CommandHandler("sudo", sudo_cmd))\n    app.add_handler(CommandHandler("sudoinfo", sudoinfo_cmd))\n    app.add_handler(CommandHandler("start",   start))
     app.add_handler(CommandHandler("status",  status_cmd))
     app.add_handler(CommandHandler("session", session_cmd))
     app.add_handler(CommandHandler("unhost",  unhost_cmd))
@@ -660,7 +766,7 @@ def main():
             BotCommand("unhost",  "Remove a saved session by phone"),
             BotCommand("join",    "Join with all accounts"),
             BotCommand("cancel",  "Cancel current flow"),
-            BotCommand("help",    "Show all commands"),
+            BotCommand("help",    "Show all commands"),\n            BotCommand("sudo", "Grant sudo access (owner only)"),\n            BotCommand("sudoinfo", "Show owner and sudo users (owner only)"),
         ])
 
     app.post_init = on_startup
