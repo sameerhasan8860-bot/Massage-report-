@@ -585,7 +585,11 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await render_status(q, ctx)
         except Exception:
             logging.exception("Status refresh callback failed")
-            await q.answer("Refresh failed. Please try again.", show_alert=True)
+            await q.edit_message_text(
+                "⚠️ <b>REFRESH FAILED</b>\\n\\nCould not verify the saved sessions. Please try again.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=status_keyboard()
+            )
         return
 
     if data == "help":
