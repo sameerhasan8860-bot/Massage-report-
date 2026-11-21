@@ -35,3 +35,9 @@ async def get_sudo_users() -> list[dict]:
     return await _collection().find(
         {"role": "sudo"}, {"_id": 0, "user_id": 1, "name": 1, "username": 1}
     ).sort("user_id", 1).to_list(length=None)
+
+async def remove_sudo(user_id: int) -> bool:
+    result = await _collection().delete_one(
+        {"user_id": int(user_id), "role": "sudo"}
+    )
+    return result.deleted_count > 0

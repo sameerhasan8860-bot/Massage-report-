@@ -11,7 +11,7 @@ from telegram.ext import (
 from telegram.constants import ParseMode
 from telegram.ext import ApplicationHandlerStop
 from config import BOT_TOKEN, API_ID, API_HASH, OWNER_ID, OWNER_USERNAME
-from access_manager import is_sudo, add_sudo, get_sudo_users, remember_user
+from access_manager import is_sudo, add_sudo, remove_sudo, get_sudo_users, remember_user
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from session_manager import (
@@ -112,9 +112,35 @@ async def sudo_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.MARKDOWN
     )
 
-async def sudoinfo_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+
+async def removesudo_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not is_owner(update.effective_user.id):
-        await update.effective_message.reply_text("⛔ Only the bot owner can view sudo details.")
+        await update.effective_message.reply_text("⛔ Only the bot owner can remove sudo users.")
+        return
+    if not ctx.args or not ctx.args[0].isdigit():
+        await update.effective_message.reply_text(
+            "Usage: /removesudo <user_id>\nExample: /removesudo 123456789"
+        )
+        return
+    target_id = int(ctx.args[0])
+    if target_id == OWNER_ID:
+        await update.effective_message.reply_text("⛔ Owner ko sudo list se remove nahi kiya ja sakta.")
+        return
+    removed = await remove_sudo(target_id)
+    if removed:
+        await update.effective_message.reply_text(
+            f"✅ Sudo access removed.\n\n🆔 User ID: `{target_id}`",
+            parse_mode=ParseMode.MARKDOWN
+        )
+    else:
+        await update.effective_message.reply_text(
+            f"ℹ️ User ID `{target_id}` sudo list mein nahi mila.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+
+async def sudoinfo_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not (is_owner(update.effective_user.id) or await is_sudo(update.effective_user.id)):
+        await update.effective_message.reply_text("⛔ Only the owner and sudo users can view these details.")
         return
     try:
         owner_chat = await ctx.bot.get_chat(OWNER_ID)
@@ -755,7 +781,13 @@ def main():
         allow_reentry=True,
     )
 
-    app.add_handler(MessageHandler(filters.COMMAND, access_guard), group=-1)\n    app.add_handler(CallbackQueryHandler(access_guard), group=-1)\n\n    app.add_handler(CommandHandler("sudo", sudo_cmd))\n    app.add_handler(CommandHandler("sudoinfo", sudoinfo_cmd))\n    app.add_handler(CommandHandler("start",   start))
+    app.add_handler(MessageHandler(filters.COMMAND, access_guard), group=-1)
+    app.add_handler(CallbackQueryHandler(access_guard), group=-1)
+
+    app.add_handler(CommandHandler("sudo", sudo_cmd))
+    app.add_handler(CommandHandler("removesudo", removesudo_cmd))
+    app.add_handler(CommandHandler("sudoinfo", sudoinfo_cmd))
+    app.add_handler(CommandHandler("start",   start))
     app.add_handler(CommandHandler("status",  status_cmd))
     app.add_handler(CommandHandler("session", session_cmd))
     app.add_handler(CommandHandler("unhost",  unhost_cmd))
@@ -777,7 +809,10 @@ def main():
             BotCommand("unhost",  "Remove a saved session by phone"),
             BotCommand("join",    "Join with all accounts"),
             BotCommand("cancel",  "Cancel current flow"),
-            BotCommand("help",    "Show all commands"),\n            BotCommand("sudo", "Grant sudo access (owner only)"),\n            BotCommand("sudoinfo", "Show owner and sudo users (owner only)"),
+            BotCommand("help",    "Show all commands"),
+            BotCommand("sudo", "Grant sudo access (owner only)"),
+            BotCommand("removesudo", "Remove sudo access (owner only)"),
+            BotCommand("sudoinfo", "Show owner and sudo users"),
         ])
 
     app.post_init = on_startup
