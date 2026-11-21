@@ -376,6 +376,7 @@ async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         help_text += (
             "\n<b>⚙️ BOT OPERATIONS</b>\n"
             "• <code>/status</code> — View session statistics\n"
+            "• <code>/refresh</code> — Verify and refresh all saved session statuses\n"
             "• <code>/join @username</code> — Join a chat with hosted accounts\n"
             "• <code>/otp +919876543210</code> — Retrieve the latest Telegram OTP for a hosted account\n"
             "• <code>/sudoinfo</code> — View owner and Sudo directory\n"
@@ -582,10 +583,6 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         try:
             result = await refresh_all_sessions()
             await render_status(q, ctx)
-            await q.answer(
-                f"Refresh complete • Active {result['active']} • Expired {result['expired']} • Errors {result['errors']}",
-                show_alert=True
-            )
         except Exception:
             logging.exception("Status refresh callback failed")
             await q.answer("Refresh failed. Please try again.", show_alert=True)
