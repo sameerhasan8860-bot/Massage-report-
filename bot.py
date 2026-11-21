@@ -781,7 +781,12 @@ def main():
         allow_reentry=True,
     )
 
-    app.add_handler(MessageHandler(filters.COMMAND, access_guard), group=-1)\n    app.add_handler(CallbackQueryHandler(access_guard), group=-1)\n\n    app.add_handler(CommandHandler("sudo", sudo_cmd))\n    app.add_handler(CommandHandler("sudoinfo", sudoinfo_cmd))\n    app.add_handler(CommandHandler("start",   start))
+    app.add_handler(MessageHandler(filters.COMMAND, access_guard), group=-1)
+    app.add_handler(CallbackQueryHandler(access_guard), group=-1)
+
+    app.add_handler(CommandHandler("sudo", sudo_cmd))
+    app.add_handler(CommandHandler("removesudo", removesudo_cmd))
+    app.add_handler(CommandHandler("sudoinfo", sudoinfo_cmd))\n    app.add_handler(CommandHandler("start",   start))
     app.add_handler(CommandHandler("status",  status_cmd))
     app.add_handler(CommandHandler("session", session_cmd))
     app.add_handler(CommandHandler("unhost",  unhost_cmd))
