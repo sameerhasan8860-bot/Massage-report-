@@ -209,7 +209,7 @@ async def cancel_flow(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
     elif update.effective_message:
         await update.effective_message.reply_text(
-            "❌ Cancelled.", reply_markup=main_menu_kb()
+            "❌ Cancelled.", reply_markup=await menu_for_user(uid)
         )
     return ConversationHandler.END
 
@@ -535,7 +535,7 @@ async def recv_2fa(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"✅ Account `{data['phone']}` added!",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=main_menu_kb()
+            reply_markup=await menu_for_user(uid)
         )
         tmp.pop(uid, None)
     except Exception as e:
