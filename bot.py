@@ -474,12 +474,14 @@ async def render_status(target, ctx: ContextTypes.DEFAULT_TYPE):
     active = await get_active_count()
     expired = await get_expired_count()
     body = (
-        "📊 <b>ACCOUNT STATUS</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n\n"
-        f"🟢 <b>Active IDs</b>     <code>{active}</code>\n"
-        f"🔴 <b>Expired IDs</b>    <code>{expired}</code>\n"
-        f"📦 <b>Total Accounts</b> <code>{total}</code>\n\n"
-        "<i>Use Refresh to verify saved sessions with Telegram.</i>"
+        "<pre>"
+        "╔══════════════════╗\n"
+        "║   📊 BOT STATUS   ║\n"
+        "╚══════════════════╝\n\n"
+        f"🟢 Active IDs   : {active}\n"
+        f"🔴 Expired IDs  : {expired}\n"
+        f"📦 Total IDs    : {total}"
+        "</pre>"
     )
     await target.edit_message_text(
         body, parse_mode=ParseMode.HTML, reply_markup=status_keyboard()
