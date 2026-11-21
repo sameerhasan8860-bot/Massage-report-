@@ -69,14 +69,38 @@ async def access_guard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not user:
         raise ApplicationHandlerStop
-    await remember_user(user.id, user.full_name, user.username)
-    if is_owner(user.id) or await is_sudo(user.id):
+
+    # The owner is trusted by the configured OWNER_ID and must not depend on MongoDB.
+    if is_owner(user.id):
         return
+
+    try:
+        await remember_user(user.id, user.full_name, user.username)
+        user_is_sudo = await is_sudo(user.id)
+    except Exception:
+        logging.exception("Access database check failed for user %s", user.id)
+        if update.callback_query:
+            await update.callback_query.answer(
+                "Access service temporarily unavailable. Try again shortly.",
+                show_alert=True
+            )
+        elif update.effective_message:
+            await update.effective_message.reply_text(
+                "⚠️ <b>ACCESS SERVICE UNAVAILABLE</b>\n\n"
+                "The access database could not be reached. Please try again shortly.",
+                parse_mode=ParseMode.HTML
+            )
+        raise ApplicationHandlerStop
+
+    if user_is_sudo:
+        return
+
     if update.callback_query:
         if update.callback_query.data in ALLOWED_USER_CALLBACKS:
             return
         await deny_non_sudo(update, ctx)
         raise ApplicationHandlerStop
+
     message = update.effective_message
     text_value = message.text or "" if message else ""
     command = text_value.split(maxsplit=1)[0].split("@", 1)[0].lower() if text_value.startswith("/") else ""
