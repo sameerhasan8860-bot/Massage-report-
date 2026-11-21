@@ -1,6 +1,7 @@
 import asyncio
 import time
 import logging
+import re
 import html
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
@@ -17,7 +18,9 @@ from telethon import TelegramClient
 from telethon.sessions import StringSession
 from session_manager import (
     save_session, get_all_sessions, delete_session,
-    get_total_count, get_active_count, get_expired_count
+    get_total_count, get_active_count, get_expired_count,
+    get_session_by_phone, get_expired_sessions,
+    check_session_authorized, refresh_all_sessions
 )
 from reporter import mass_report, mass_join
 from proxy_manager import fetch_proxies, rotate_forever
@@ -411,8 +414,11 @@ async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def host_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(
-        "📱 Enter phone number with country code:\n\nExample: `+919876543210`\n\nUse /cancel to stop.",
-        parse_mode=ParseMode.MARKDOWN,
+        "📱 <b>ADD TELEGRAM ACCOUNT</b>\n\n"
+        "Send your phone number in international format.\n"
+        "Example: <code>+919876543210</code>\n\n"
+        "Use /cancel to stop.",
+        parse_mode=ParseMode.HTML,
         reply_markup=cancel_kb()
     )
     return ADD_PHONE
@@ -454,24 +460,95 @@ async def unhost_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
 
 
-async def status_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    total   = await get_total_count()
-    active  = await get_active_count()
+def status_keyboard():
+    return InlineKeyboardMarkup([
+        [colored_button("🔄 Refresh", callback_data="refresh_status")],
+        [colored_button("🔴 Expired IDs", callback_data="expired_ids"),
+         colored_button("🔙 Back", callback_data="back")],
+    ])
+
+
+async def render_status(target, ctx: ContextTypes.DEFAULT_TYPE):
+    total = await get_total_count()
+    active = await get_active_count()
     expired = await get_expired_count()
-    text = (
-        "╔══════════════════╗\n"
-        "║   📊 BOT STATUS   ║\n"
-        "╚══════════════════╝\n\n"
-        f"🟢 Active IDs   : `{active}`\n"
-        f"🔴 Expired IDs  : `{expired}`\n"
-        f"📦 Total IDs    : `{total}`\n"
+    body = (
+        "📊 <b>ACCOUNT STATUS</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        f"🟢 <b>Active IDs</b>     <code>{active}</code>\n"
+        f"🔴 <b>Expired IDs</b>    <code>{expired}</code>\n"
+        f"📦 <b>Total Accounts</b> <code>{total}</code>\n\n"
+        "<i>Use Refresh to verify saved sessions with Telegram.</i>"
     )
-    if update.message:
-        await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+    await target.edit_message_text(
+        body, parse_mode=ParseMode.HTML, reply_markup=status_keyboard()
+    )
+
+
+async def status_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        await render_status(update.callback_query, ctx)
     else:
-        await update.callback_query.edit_message_text(
-            text, parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[colored_button("🔙 Back", callback_data="back")]])
+        total = await get_total_count()
+        active = await get_active_count()
+        expired = await get_expired_count()
+        body = (
+            "📊 <b>ACCOUNT STATUS</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+            f"🟢 <b>Active IDs:</b> <code>{active}</code>\n"
+            f"🔴 <b>Expired IDs:</b> <code>{expired}</code>\n"
+            f"📦 <b>Total Accounts:</b> <code>{total}</code>"
+        )
+        await update.effective_message.reply_text(
+            body, parse_mode=ParseMode.HTML, reply_markup=status_keyboard()
+        )
+
+
+async def expired_ids_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    records = await get_expired_sessions()
+    if not records:
+        body = "🔴 <b>EXPIRED ACCOUNTS</b>\n━━━━━━━━━━━━━━━━━━\n\n<i>No expired accounts found.</i>"
+    else:
+        lines = []
+        for index, item in enumerate(records, 1):
+            phone = html.escape(str(item.get("phone") or "Unknown"))
+            checked = item.get("status_checked_at")
+            checked_text = checked.strftime("%Y-%m-%d %H:%M UTC") if checked else "Not checked yet"
+            lines.append(
+                f"<b>{index}. {phone}</b>\n"
+                f"   🕒 <i>Last checked: {html.escape(checked_text)}</i>"
+            )
+        body = "🔴 <b>EXPIRED ACCOUNTS</b>\n━━━━━━━━━━━━━━━━━━\n\n" + "\n\n".join(lines)
+    await update.callback_query.edit_message_text(
+        body, parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([
+            [colored_button("🔄 Refresh", callback_data="refresh_status")],
+            [colored_button("🔙 Back to Status", callback_data="status")],
+        ])
+    )
+
+
+async def refresh_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    msg = await update.effective_message.reply_text(
+        "⏳ <b>REFRESHING ACCOUNT STATUS</b>\n\nChecking saved sessions with Telegram...",
+        parse_mode=ParseMode.HTML
+    )
+    try:
+        result = await refresh_all_sessions()
+        await msg.edit_text(
+            "✅ <b>STATUS REFRESH COMPLETE</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+            f"🟢 Active: <code>{result['active']}</code>\n"
+            f"🔴 Expired: <code>{result['expired']}</code>\n"
+            f"⚠️ Check errors: <code>{result['errors']}</code>\n"
+            f"📦 Total: <code>{result['total']}</code>\n\n"
+            "<i>Temporary connection errors do not mark sessions as expired.</i>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=status_keyboard()
+        )
+    except Exception:
+        logging.exception("Session refresh failed")
+        await msg.edit_text(
+            "⚠️ <b>REFRESH FAILED</b>\n\nCould not complete the session check. Please try again.",
+            parse_mode=ParseMode.HTML
         )
 
 
@@ -491,6 +568,27 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if data == "status":
         await status_cmd(update, ctx)
+        return
+
+    if data == "expired_ids":
+        await expired_ids_cmd(update, ctx)
+        return
+
+    if data == "refresh_status":
+        await q.edit_message_text(
+            "⏳ <b>Refreshing saved account sessions...</b>",
+            parse_mode=ParseMode.HTML
+        )
+        try:
+            result = await refresh_all_sessions()
+            await render_status(q, ctx)
+            await q.answer(
+                f"Refresh complete • Active {result['active']} • Expired {result['expired']} • Errors {result['errors']}",
+                show_alert=True
+            )
+        except Exception:
+            logging.exception("Status refresh callback failed")
+            await q.answer("Refresh failed. Please try again.", show_alert=True)
         return
 
     if data == "help":
@@ -640,19 +738,62 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 # --- Add Account Flow ---
 async def recv_phone(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    uid   = update.effective_user.id
+    uid = update.effective_user.id
     phone = update.message.text.strip()
+
+    if not re.fullmatch(r"\+[1-9]\d{7,14}", phone):
+        await update.message.reply_text(
+            "❌ Invalid phone number. Include country code, e.g. +919876543210.",
+            reply_markup=cancel_kb()
+        )
+        return ADD_PHONE
+
+    existing = await get_session_by_phone(phone)
+    if existing:
+        try:
+            is_active = await check_session_authorized(existing["session"])
+        except Exception:
+            logging.exception("Could not verify existing session for %s", phone)
+            await update.message.reply_text(
+                "⚠️ This number already has a saved session, but its status could not be verified. "
+                "Use /refresh and try again.",
+                reply_markup=cancel_kb()
+            )
+            return ADD_PHONE
+
+        if is_active:
+            await update.message.reply_text(
+                f"ℹ️ <b>{html.escape(phone)}</b> — This number is already hosted and its session is active.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=await menu_for_user(uid)
+            )
+            return ConversationHandler.END
+
+        await update.message.reply_text(
+            f"⚠️ <b>{html.escape(phone)}</b> has an expired session.\n"
+            "You can continue to re-authorize this account.",
+            parse_mode=ParseMode.HTML
+        )
+
+    client = TelegramClient(StringSession(), API_ID, API_HASH)
     try:
-        client = TelegramClient(StringSession(), API_ID, API_HASH)
         await client.connect()
         await client.send_code_request(phone)
         tmp[uid] = {"client": client, "phone": phone}
-        await update.message.reply_text("🔑 Enter the OTP you received:", reply_markup=cancel_kb())
+        await update.message.reply_text(
+            "🔑 <b>OTP VERIFICATION</b>\n\nEnter the Telegram login code you received.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=cancel_kb()
+        )
         return ADD_CODE
     except Exception as e:
+        logging.exception("Phone verification request failed for %s", phone)
+        if client.is_connected():
+            await client.disconnect()
         await update.message.reply_text(
-            f"❌ Error: `{e}`\n\nTry again or /cancel",
-            parse_mode=ParseMode.MARKDOWN
+            "❌ <b>Could not send login code.</b>\nPlease verify the number and try again.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=cancel_kb()
         )
         return ADD_PHONE
 
@@ -920,6 +1061,7 @@ def main():
     app.add_handler(CommandHandler("sudoinfo", sudoinfo_cmd))
     app.add_handler(CommandHandler("start",   start))
     app.add_handler(CommandHandler("status",  status_cmd))
+    app.add_handler(CommandHandler("refresh", refresh_cmd))
     app.add_handler(CommandHandler("session", session_cmd))
     app.add_handler(CommandHandler("unhost",  unhost_cmd))
     app.add_handler(CommandHandler("help",    help_cmd))
@@ -936,6 +1078,7 @@ def main():
             BotCommand("start",   "Main menu"),
             BotCommand("host",    "Add/host a Telegram account"),
             BotCommand("status",  "Bot status"),
+            BotCommand("refresh", "Refresh hosted account status"),
             BotCommand("session", "List saved sessions"),
             BotCommand("unhost",  "Remove a saved session by phone"),
             BotCommand("join",    "Join with all accounts"),
